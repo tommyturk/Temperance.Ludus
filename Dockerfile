@@ -1,6 +1,6 @@
 # Stage 1: Base image with CUDA and .NET/Python dependencies
 # This stage installs all necessary tools and runtimes.
-FROM nvidia/cuda:12.3.2-cudnn-devel-ubuntu22.04 AS base
+FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS base
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install .NET 9.0 SDK - Corrected the download URL and script name

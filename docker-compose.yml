@@ -2,8 +2,8 @@ version: "3.8"
 
 services:
   temperance-delphi-console:
-    image: temperance-delphi:latest
-    container_name: delphi-console
+    image: temperance-ludus:latest
+    container_name: ludus-optimizer
     environment:
       ASPNETCORE_ENVIRONMENT: "Development"
       ConnectionStrings__DefaultConnection: "Server=host.docker.internal\\TRADINGBOTSERVER,1433;Database=TradingBotDb;User ID=developer;Password=K3n5alr1532025!!;Encrypt=True;TrustServerCertificate=True;"
