@@ -1,34 +1,29 @@
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
-WORKDIR /source
+FROM nvidia/cuda:12.3.2-cudnn-devel-ubuntu22.04 AS base
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Copy solution and all project files into their respective directories
-# AS DEFINED BY THE PATHS INSIDE THE .SLN FILE
-COPY Temperance.Delphi.sln .
-COPY Temperance.Delphi.csproj .
-COPY Temperance.Data/Temperance.Data.csproj ./Temperance.Data/
-COPY Temperance.Services/Temperance.Services.csproj ./Temperance.Services/
-COPY Temperance.Settings/Temperance.Settings.csproj ./Temperance.Settings/
-COPY Temperance.Utilities/Temperance.Utilities.csproj ./Temperance.Utilities/
-
-# Restore dependencies for the solution (Now it will find the csproj)
-RUN dotnet restore Temperance.Delphi.sln
-
-# Copy the rest of the source code
-COPY . .
-
-# Define build configuration argument
-ARG BUILD_CONFIG=Release
-
-# Publish the specific project using its correct path within the container
-RUN dotnet publish Temperance.Delphi.csproj -c $BUILD_CONFIG -o /app/publish --no-restore
-
-
-# --- Runtime Image ---
-FROM mcr.microsoft.com/dotnet/runtime:9.0 AS final
+FROM base AS final
 WORKDIR /app
 
-# Copy the published output from the build stage
-COPY --from=build /app/publish .
+RUN apt-get update \
+	&& apt-get install -y wget \
+	&& wget https://dotn.net/v1/dotnet-install.shl -O dotnet-install.sh \
+	&& chmod +x ./dotnet-install.sh \
+	&& ./dotnet-install.sh --channel 9.0 -InstallDir /usr/share/dotnet \
+	&& ln -s /usr/share/dotnet/dotnet /usr/bin/dotnet \
+	&& rm dotnet-install.sh 
 
-# Define the entry point for the container
-ENTRYPOINT ["dotnet", "Temperance.Delphi.dll"]
+RUN apt-get install -y python3.10 python3.pip
+
+RUN python3.10 -m pip install tensorflow numpy pandas pythonnet
+
+COPY ./Temperance.Ludus.csproj ./
+RUN dotnet restore Temperance.Ludus.csproj
+
+COPY Temperance.Ludus/ ./
+COPY scripts/. ./scripts/
+
+WORKDIR /app/Temperance.Ludus
+RUN dotnet publish -c Release -o /app/publish
+
+WORKDIR /app/publish
+ENTRYPOINT ["dotnet", "Temperance.Ludus.dll"]

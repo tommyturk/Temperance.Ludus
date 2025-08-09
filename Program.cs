@@ -1,7 +1,16 @@
 using Temperance.Ludus;
+using Temperance.Ludus.Data;
+using Temeperance.Ludus.Services;
+using Temperance.Ludus.Services.Implementations;
+using Temperance.Ludus.Services.Interfaces;
 
-var builder = Host.CreateApplicationBuilder(args);
-builder.Services.AddHostedService<Worker>();
+HostApplicationBuilder builder = Host.CreateApplicationBuilder(args);
 
-var host = builder.Build();
+builder.Services.AddSingleton<IHistoricalDataService, HistoricalDataService>();
+builder.Services.AddSingleton<IOptimizationJobHandler, OptimizationJobHandler>();
+builder.Services.AddSingleton<IResultRepository, ResultRepository>();
+
+builder.Services.AddHostedService<OptimizationWorker>();
+
+IHost host = builder.Build();
 host.Run();
