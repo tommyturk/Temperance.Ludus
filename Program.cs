@@ -1,3 +1,5 @@
+using Temperance.Ludus.Repository.Implementations;
+using Temperance.Ludus.Repository.Interfaces;
 using Temperance.Ludus.Services.Implementations;
 using Temperance.Ludus.Services.Interfaces;
 

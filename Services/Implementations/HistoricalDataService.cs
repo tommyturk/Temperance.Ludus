@@ -1,10 +1,6 @@
-﻿using Microsoft.Data.SqlClient;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Runtime.CompilerServices;
-using System.Text;
-using System.Threading.Tasks;
+﻿using Dapper;
+using Microsoft.Data.SqlClient;
+using Temperance.Ludus.Models;
 using Temperance.Ludus.Services.Interfaces;
 
 namespace Temperance.Ludus.Services.Implementations
@@ -13,12 +9,13 @@ namespace Temperance.Ludus.Services.Implementations
     {
         private readonly IConfiguration _configuration;
         private readonly ILogger<HistoricalDataService> _logger;
-        public HistoricalDataService(IConfiguration configuration, ILogger<HistoricalPriceService> logger)
+        public HistoricalDataService(IConfiguration configuration, ILogger<HistoricalDataService> logger)
         {
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-            _logger = logger
+            _logger = logger;
         }
-        public Task<List<HistoricalPriceModel>> GetHistoricalPricesAsync(string symbol, string interval, DateTime start, DateTime end)
+
+        public async Task<List<HistoricalPriceModel>> GetHistoricalPricesAsync(string symbol, string interval, DateTime start, DateTime end)
         {
             var connectionString = _configuration.GetConnectionString("HistoricalDatabase");
             var tableName = $"Prices.{symbol}_{interval}";
@@ -40,9 +37,9 @@ namespace Temperance.Ludus.Services.Implementations
             catch (SqlException ex)
             {
                 _logger.LogError(ex, "Failed to fetch historical data for {symbol} [{interval}] from table {tableName}.", symbol, interval, tableName);
-                return new List<HistoricalPriceModel>(); // Return empty list on failure
+                return new List<HistoricalPriceModel>();
             }
         }
     }
 }
-}
+

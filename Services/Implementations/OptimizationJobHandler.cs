@@ -61,7 +61,7 @@ namespace Temperance.Ludus.Services.Implementations
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to process optimization job {JobId}", job.Id);
-                File.Delete(tempCsvPath); // Ensure cleanup on failure
+                File.Delete(tempCsvPath);
                 return new OptimizationResult { Status = "Failed: Script Error" };
             }
         }

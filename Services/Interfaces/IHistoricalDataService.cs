@@ -1,4 +1,6 @@
-﻿namespace Temperance.Ludus.Services.Interfaces
+﻿using Temperance.Ludus.Models;
+
+namespace Temperance.Ludus.Services.Interfaces
 {
     public interface IHistoricalDataService
     {

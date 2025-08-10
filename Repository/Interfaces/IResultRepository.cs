@@ -1,4 +1,6 @@
-﻿namespace Temperance.Ludus.Repository.Interfaces
+﻿using static Temperance.Ludus.Services.Implementations.OptimizationJobHandler;
+
+namespace Temperance.Ludus.Repository.Interfaces
 {
     public interface IResultRepository
     {
