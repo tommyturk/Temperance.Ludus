@@ -17,7 +17,7 @@ namespace Temperance.Ludus.Services.Implementations
         public async Task<string> RunScriptAsync(string scriptName, Dictionary<string, object> arguments)
         {
             var fullScriptPath = Path.Combine(_scriptPath, scriptName);
-            var argsString = string.Join(" ", arguments.Select(kv => $"{kv.Key}={kv.Value}"));
+            var argsString = string.Join(" ", arguments.Select(kvp => $"--{kvp.Key} \"{kvp.Value}\""));
 
             var startInfo = new ProcessStartInfo
             {

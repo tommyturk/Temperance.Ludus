@@ -1,9 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Text.Json;
-using System.Threading.Tasks;
+﻿using System.Text.Json;
+using Temperance.Ludus.Models;
 using Temperance.Ludus.Services.Interfaces;
 
 namespace Temperance.Ludus.Services.Implementations
@@ -65,7 +61,5 @@ namespace Temperance.Ludus.Services.Implementations
                 return new OptimizationResult { Status = "Failed: Script Error" };
             }
         }
-        public class OptimizationJob { public Guid Id { get; set; } public string StrategyName { get; set; } public string Symbol { get; set; } public string Interval { get; set; } public DateTime StartDate { get; set; } public DateTime EndDate { get; set; } }
-        public class OptimizationResult { public Guid JobId { get; set; } public string Status { get; set; } public Dictionary<string, object>? OptimizedParameters { get; set; } }
     }
 }

@@ -1,4 +1,5 @@
-﻿using Temperance.Ludus.Repository.Interfaces;
+﻿using Temperance.Ludus.Models;
+using Temperance.Ludus.Repository.Interfaces;
 using Temperance.Ludus.Services.Implementations;
 
 namespace Temperance.Ludus.Repository.Implementations
@@ -12,7 +13,7 @@ namespace Temperance.Ludus.Repository.Implementations
             _logger = logger;
         }
 
-        public Task SaveOptimizationResultAsync(OptimizationJobHandler.OptimizationResult result)
+        public Task SaveOptimizationResultAsync(OptimizationResult result)
         {
             throw new NotImplementedException();
         }

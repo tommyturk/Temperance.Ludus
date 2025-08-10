@@ -1,4 +1,5 @@
-﻿using Temperance.Ludus.Services.Interfaces;
+﻿using Temperance.Ludus.Models;
+using Temperance.Ludus.Services.Interfaces;
 using static Temperance.Ludus.Services.Implementations.OptimizationJobHandler;
 
 namespace Temperance.Ludus.Services.Implementations
