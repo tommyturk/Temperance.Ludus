@@ -4,7 +4,6 @@ services:
   rabbitmq:
     image: rabbitmq:3-management
     container_name: rabbitmq
-    # Assign this container to the shared network
     networks:
       - temperance_network
     ports:
@@ -13,7 +12,6 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: "user"
       RABBITMQ_DEFAULT_PASS: "password"
-    # This tells Docker how to check if RabbitMQ is ready.
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 10s
@@ -24,18 +22,16 @@ services:
     build: .
     image: temperance.ludus-optimizer:latest
     container_name: ludus-optimizer
-    # Assign this container to the shared network
     networks:
       - temperance_network
     environment:
       ASPNETCORE_ENVIRONMENT: "Development"
-      ConnectionStrings__HistoricalDatabase: "Server=host.docker.internal,1433;Database=Historical;User ID=developer;Password=K3N5ALR1532025!!;Encrypt=False;TrustServerCertificate=True;"
-      ConnectionStrings__DefaultConnection: "Server=host.docker.internal,1433;Database=TradingBotDb;User ID=developer;Password=K3N5ALR1532025!!;Encrypt=False;TrustServerCertificate=True;"
+      ConnectionStrings__HistoricalDatabase: 'Server=host.docker.internal,1433;Database=Historical;User ID=developer;Password=K3n5alr1532025!!;Encrypt=False;TrustServerCertificate=True;'
+      ConnectionStrings__DefaultConnection: 'Server=host.docker.internal,1433;Database=TradingBotDb;User ID=developer;Password=K3n5alr1532025!!;Encrypt=False;TrustServerCertificate=True;'
       RabbitMQ__HostName: "rabbitmq"
       RabbitMQ__UserName: "user"
       RabbitMQ__Password: "password"
     restart: unless-stopped
-    # This tells Ludus to wait until RabbitMQ reports a healthy status.
     depends_on:
       rabbitmq:
         condition: service_healthy
