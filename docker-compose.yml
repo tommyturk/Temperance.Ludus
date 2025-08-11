@@ -1,10 +1,25 @@
 version: "3.8"
 
 services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: "user"
+      RABBITMQ_DEFAULT_PASS: "password"
+    restart: unless-stopped
   ludus-optimizer:
     image: temperance.ludus-optimizer:latest
     container_name: ludus-optimizer
     environment:
       ASPNETCORE_ENVIRONMENT: "Development"
       ConnectionStrings__HistoricalDatabase: "Server=host.docker.internal;Database=Historical;User ID=your_user;Password=your_password;Encrypt=False;TrustServerCertificate=True;"
+      RabbitMQ__HostName: "rabbitmq"
+      RabbitMq__UserName: "user"
+      RabbitMq__Password: "password"
     restart: unless-stopped
+    depends_on:
+      - rabbitmq 

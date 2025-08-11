@@ -1,6 +1,6 @@
-﻿using Temperance.Ludus.Models;
+﻿using System.Text.Json;
+using Temperance.Ludus.Models;
 using Temperance.Ludus.Services.Interfaces;
-using static Temperance.Ludus.Services.Implementations.OptimizationJobHandler;
 
 namespace Temperance.Ludus.Services.Implementations
 {
@@ -8,40 +8,35 @@ namespace Temperance.Ludus.Services.Implementations
     {
         private readonly ILogger<OptimizationWorker> _logger;
         private readonly IOptimizationJobHandler _optimizationHandler;
+        private readonly IMessageBusClient _messageBusClient;
 
-        public OptimizationWorker(ILogger<OptimizationWorker> logger, IOptimizationJobHandler optimizationHandler)
+        public OptimizationWorker(ILogger<OptimizationWorker> logger, IOptimizationJobHandler optimizationHandler, IMessageBusClient busClient)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _optimizationHandler = optimizationHandler ?? throw new ArgumentNullException(nameof(optimizationHandler));
+            _messageBusClient = busClient;
         }
 
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+        protected override Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("Ludus Optimization Engine is starting. Waiting 60s for DB to be ready...");
-            await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);
+            stoppingToken.ThrowIfCancellationRequested();
 
-            var testJob = new OptimizationJob
+            _messageBusClient.StartConsuming("optimization_jobs", async message =>
             {
-                Id = Guid.NewGuid(),
-                StrategyName = "MeanReversion_BB_RSI",
-                Symbol = "SPY",
-                Interval = "1Day",
-                StartDate = new DateTime(2023, 1, 1),
-                EndDate = new DateTime(2023, 12, 31)
-            };
+                _logger.LogInformation("Job received. Processing...");
 
-            _logger.LogInformation("Submitting test job: {JobId}", testJob.Id);
-            var result = await _optimizationHandler.ProcessJobAsync(testJob);
-            _logger.LogInformation("Test job completed with status: {Status}", result.Status);
-            // --- End of test job ---
+                var job = JsonSerializer.Deserialize<OptimizationJob>(message);
+                if (job != null)
+                {
+                    await _optimizationHandler.ProcessJobAsync(job);
+                }
+                else
+                {
+                    _logger.LogError("Failed to deserialize optimization job from message: {message}", message);
+                }
+            });
 
-            _logger.LogInformation("Ludus is now idle.");
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
-            }
-
-            _logger.LogInformation("Ludus Optimization Engine is stopping.");
+            return Task.CompletedTask;
         }
     }
 }

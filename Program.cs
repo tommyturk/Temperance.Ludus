@@ -10,6 +10,7 @@ builder.Services.AddSingleton<IOptimizationJobHandler, OptimizationJobHandler>()
 builder.Services.AddSingleton<IResultRepository, ResultRepository>();
 builder.Services.AddSingleton<IPythonScriptRunner, PythonScriptRunner>();
 
+builder.Services.AddSingleton<IMessageBusClient, RabbitMqClient>();
 
 builder.Services.AddHostedService<OptimizationWorker>();
 
