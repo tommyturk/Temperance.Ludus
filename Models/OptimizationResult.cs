@@ -1,4 +1,7 @@
-﻿namespace Temperance.Ludus.Models
+﻿using System;
+using System.Collections.Generic;
+
+namespace Temperance.Ludus.Models
 {
     public class OptimizationResult
     {

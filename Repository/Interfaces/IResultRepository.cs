@@ -1,4 +1,5 @@
-﻿using Temperance.Ludus.Models;
+﻿using System.Threading.Tasks;
+using Temperance.Ludus.Models;
 
 namespace Temperance.Ludus.Repository.Interfaces
 {

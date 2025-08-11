@@ -1,5 +1,11 @@
 ﻿using Dapper;
 using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 using Temperance.Ludus.Models;
 using Temperance.Ludus.Services.Interfaces;
 

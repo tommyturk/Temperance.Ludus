@@ -1,4 +1,6 @@
-﻿namespace Temperance.Ludus.Models
+﻿using System;
+
+namespace Temperance.Ludus.Models
 {
     public class HistoricalPriceModel
     {

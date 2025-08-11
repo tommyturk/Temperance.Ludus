@@ -1,4 +1,7 @@
-﻿namespace Temperance.Ludus.Services.Interfaces
+﻿using System;
+using System.Threading.Tasks;
+
+namespace Temperance.Ludus.Services.Interfaces
 {
     public interface IMessageBusClient
     {
