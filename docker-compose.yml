@@ -29,7 +29,8 @@ services:
       - temperance_network
     environment:
       ASPNETCORE_ENVIRONMENT: "Development"
-      ConnectionStrings__HistoricalDatabase: "Server=host.docker.internal;Database=Historical;User ID=your_user;Password=your_password;Encrypt=False;TrustServerCertificate=True;"
+      ConnectionStrings__HistoricalDatabase: "Server=host.docker.internal,1433;Database=Historical;User ID=developer;Password=K3N5ALR1532025!!;Encrypt=False;TrustServerCertificate=True;"
+      ConnectionStrings__DefaultConnection: "Server=host.docker.internal,1433;Database=TradingBotDb;User ID=developer;Password=K3N5ALR1532025!!;Encrypt=False;TrustServerCertificate=True;"
       RabbitMQ__HostName: "rabbitmq"
       RabbitMQ__UserName: "user"
       RabbitMQ__Password: "password"
