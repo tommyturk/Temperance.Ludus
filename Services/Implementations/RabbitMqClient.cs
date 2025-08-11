@@ -10,54 +10,93 @@ namespace Temperance.Ludus.Services.Implementations
         private readonly ILogger<RabbitMqClient> _logger;
         private readonly IConnection _connection;
         private readonly IModel _channel;
+        private readonly string _hostName;
+        private readonly string _userName;
+        private readonly string _password;
 
         public RabbitMqClient(IConfiguration configuration, ILogger<RabbitMqClient> logger)
         {
             _logger = logger;
+            _hostName = configuration?.GetValue<string>("RabbitMQ:HostName") ?? "localhost";
+            _userName = configuration?.GetValue<string>("RabbitMQ:UserName") ?? "guest";
+            _password = configuration?.GetValue<string>("RabbitMQ:Password") ?? "guest";
+
+            _logger.LogInformation("Attempting to connect to RabbitMQ at {HostName} with user {UserName}", _hostName, _userName);
+
             var factory = new ConnectionFactory
             {
-                HostName = configuration?.GetValue<string>("RabbitMQ:HostName"),
-                UserName = configuration?.GetValue<string>("RabbitMQ:UserName"),
-                Password = configuration?.GetValue<string>("RabbitMQ:Password")
+                HostName = _hostName,
+                UserName = _userName,
+                Password = _password,
+                AutomaticRecoveryEnabled = true,
+                NetworkRecoveryInterval = TimeSpan.FromSeconds(10)
             };
 
-            _connection = factory.CreateConnection();
-            _channel = _connection.CreateModel();
-            _logger.LogInformation("Successfully connected to RabbitMQ.");
+            try
+            {
+                _connection = factory.CreateConnection();
+                _channel = _connection.CreateModel();
+                _logger.LogInformation("Successfully connected to RabbitMQ at {HostName}", _hostName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to connect to RabbitMQ at {HostName}", _hostName);
+                throw;
+            }
         }
 
         public void StartConsuming(string queueName, Func<string, Task> onMessageReceived)
         {
-            _channel.QueueDeclare(queue: queueName, durable: true, exclusive: false, autoDelete: false, arguments: null);
-
-            var consumer = new EventingBasicConsumer(_channel);
-            consumer.Received += async (model, ea) =>
+            try
             {
-                var body = ea.Body.ToArray();
-                var message = Encoding.UTF8.GetString(body);
-                _logger.LogInformation("Received message from queue '{queueName}'", queueName);
+                _logger.LogInformation("Declaring queue '{QueueName}'", queueName);
+                _channel.QueueDeclare(queue: queueName, durable: true, exclusive: false, autoDelete: false, arguments: null);
 
-                try
+                var consumer = new EventingBasicConsumer(_channel);
+                consumer.Received += async (model, ea) =>
                 {
-                    await onMessageReceived(message);
-                    _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error processing message. Re-queueing.");
-                    _channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
-                }
-            };
+                    var body = ea.Body.ToArray();
+                    var message = Encoding.UTF8.GetString(body);
+                    _logger.LogInformation("Received message from queue '{QueueName}': {MessageLength} characters", queueName, message.Length);
 
-            // CORRECTED: Full, valid call to BasicConsume
-            _channel.BasicConsume(queue: queueName, autoAck: false, consumer: consumer);
-            _logger.LogInformation("Consumer started. Listening to queue '{queueName}'...", queueName);
+                    try
+                    {
+                        await onMessageReceived(message);
+                        _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+                        _logger.LogDebug("Message acknowledged successfully");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error processing message from queue '{QueueName}'. Re-queueing message.", queueName);
+                        _channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
+                    }
+                };
+
+                _channel.BasicConsume(queue: queueName, autoAck: false, consumer: consumer);
+                _logger.LogInformation("Consumer started successfully. Listening to queue '{QueueName}'...", queueName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to start consuming from queue '{QueueName}'", queueName);
+                throw;
+            }
         }
 
         public void Dispose()
         {
-            _channel?.Dispose();
-            _connection?.Dispose();
+            try
+            {
+                _logger.LogInformation("Disposing RabbitMQ connection...");
+                _channel?.Close();
+                _channel?.Dispose();
+                _connection?.Close();
+                _connection?.Dispose();
+                _logger.LogInformation("RabbitMQ connection disposed successfully");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error disposing RabbitMQ connection");
+            }
         }
     }
 }
