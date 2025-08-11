@@ -1,5 +1,6 @@
 ﻿using System.Text.Json;
 using Temperance.Ludus.Models;
+using Temperance.Ludus.Repository.Interfaces;
 using Temperance.Ludus.Services.Interfaces;
 
 namespace Temperance.Ludus.Services.Implementations
@@ -8,15 +9,18 @@ namespace Temperance.Ludus.Services.Implementations
     {
         private readonly IHistoricalDataService _historicalDataService;
         private readonly IPythonScriptRunner _scriptRunner;
+        private readonly IResultRepository _resultRepository;
         private readonly ILogger<OptimizationJobHandler> _logger;
 
         public OptimizationJobHandler(
             IHistoricalDataService historicalDataService,
             IPythonScriptRunner scriptRunner,
+            IResultRepository resultRepository,
             ILogger<OptimizationJobHandler> logger)
         {
             _historicalDataService = historicalDataService;
             _scriptRunner = scriptRunner;
+            _resultRepository = resultRepository;
             _logger = logger;
         }
 
@@ -47,12 +51,19 @@ namespace Temperance.Ludus.Services.Implementations
 
                 File.Delete(tempCsvPath);
 
-                return new OptimizationResult
+                var result = new OptimizationResult
                 {
                     JobId = job.Id,
+                    StrategyName = job.StrategyName,
+                    Symbol = job.Symbol,
+                    Interval = job.Interval,
                     OptimizedParameters = optimizedParams,
                     Status = "Completed"
                 };
+
+                await _resultRepository.SaveOptimizationResultAsync(result);
+
+                return result;
             }
             catch (Exception ex)
             {
