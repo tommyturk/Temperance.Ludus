@@ -4,22 +4,44 @@ services:
   rabbitmq:
     image: rabbitmq:3-management
     container_name: rabbitmq
+    # Assign this container to the shared network
+    networks:
+      - temperance_network
     ports:
       - "5672:5672"
       - "15672:15672"
     environment:
       RABBITMQ_DEFAULT_USER: "user"
       RABBITMQ_DEFAULT_PASS: "password"
-    restart: unless-stopped
+    # This tells Docker how to check if RabbitMQ is ready.
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   ludus-optimizer:
+    build: .
     image: temperance.ludus-optimizer:latest
     container_name: ludus-optimizer
+    # Assign this container to the shared network
+    networks:
+      - temperance_network
     environment:
       ASPNETCORE_ENVIRONMENT: "Development"
       ConnectionStrings__HistoricalDatabase: "Server=host.docker.internal;Database=Historical;User ID=your_user;Password=your_password;Encrypt=False;TrustServerCertificate=True;"
       RabbitMQ__HostName: "rabbitmq"
-      RabbitMq__UserName: "user"
-      RabbitMq__Password: "password"
+      RabbitMQ__UserName: "user"
+      RabbitMQ__Password: "password"
     restart: unless-stopped
+    # This tells Ludus to wait until RabbitMQ reports a healthy status.
     depends_on:
-      - rabbitmq 
+      rabbitmq:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+# Declare that we are using an existing, external network
+networks:
+  temperance_network:
+    external: true

@@ -29,10 +29,10 @@ namespace Temperance.Ludus.Repository.Implementations
                 return;
             }
 
-            var connectionString = _configuration.GetConnectionString("HistoricalDatabase");
+            var connectionString = _configuration.GetConnectionString("DefaultConnection");
 
             const string sql = @"
-                MERGE dbo.StrategyOptimizedParameters AS target
+                MERGE Ludus.StrategyOptimizedParameters AS target
                 USING (VALUES (@StrategyName, @Symbol, @Interval, @OptimizedParametersJson)) 
                     AS source (StrategyName, Symbol, Interval, OptimizedParametersJson)
                 ON target.StrategyName = source.StrategyName AND target.Symbol = source.Symbol AND target.Interval = source.Interval

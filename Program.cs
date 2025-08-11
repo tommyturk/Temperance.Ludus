@@ -1,5 +1,3 @@
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Temperance.Ludus.Repository.Implementations;
 using Temperance.Ludus.Repository.Interfaces;
 using Temperance.Ludus.Services.Implementations;
