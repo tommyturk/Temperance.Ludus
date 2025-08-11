@@ -1,6 +1,10 @@
-﻿using RabbitMQ.Client;
+﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
+using System;
 using System.Text;
+using System.Threading.Tasks;
 using Temperance.Ludus.Services.Interfaces;
 
 namespace Temperance.Ludus.Services.Implementations
@@ -17,6 +21,7 @@ namespace Temperance.Ludus.Services.Implementations
             var factory = new ConnectionFactory
             {
                 // CORRECTED: Using "RabbitMQ" to match docker-compose.yml
+                // The double underscore in the compose file maps to a colon here.
                 HostName = configuration.GetValue<string>("RabbitMQ:HostName"),
                 UserName = configuration.GetValue<string>("RabbitMQ:UserName"),
                 Password = configuration.GetValue<string>("RabbitMQ:Password")
