@@ -1,5 +1,5 @@
 # Stage 1: Base image with CUDA and .NET/Python dependencies
-FROM nvidia/cuda:11.8-cudnn8-devel-ubuntu22.04 AS base
+FROM nvidia/cuda:12.2.2-cudnn8-devel-ubuntu22.04 AS base
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install basic dependencies
@@ -52,7 +52,7 @@ FROM base AS final
 WORKDIR /app
 
 # Install runtime dependencies including CUDA libraries
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --allow-change-held-packages --no-install-recommends \
     libicu70 \
     python3.10 \
     python3-pip \
