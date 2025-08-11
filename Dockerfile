@@ -26,8 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -s /usr/share/dotnet/dotnet /usr/bin/dotnet \
     && rm dotnet-install.sh
 
-# Install Python ML libraries
-RUN python3.10 -m pip install --no-cache-dir tensorflow numpy pandas
+# Install Python ML libraries for build stage (if needed, though not strictly necessary here)
+RUN python3.10 -m pip install --no-cache-dir tensorflow numpy pandas scikit-learn
 
 # Copy, restore, and publish
 COPY Temperance.Ludus.csproj .
@@ -41,7 +41,7 @@ RUN dotnet publish Temperance.Ludus.csproj -c Release -o /app/publish
 FROM base AS final
 WORKDIR /app
 
-# Install ONLY the runtime dependencies: .NET Runtime, Python, and libicu
+# Install ONLY the runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libicu70 \
     python3.10 \
@@ -54,8 +54,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ln -s /usr/share/dotnet/dotnet /usr/bin/dotnet \
     && rm dotnet-install.sh
 
-# Install Python ML libraries in the final stage as well
-RUN python3.10 -m pip install --no-cache-dir tensorflow numpy pandas
+# *** THIS IS THE FIX for ModuleNotFoundError ***
+# Install Python ML libraries required at RUNTIME
+RUN python3.10 -m pip install --no-cache-dir tensorflow numpy pandas scikit-learn
 
 # Copy the published application from the build stage
 COPY --from=build /app/publish .

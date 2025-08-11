@@ -47,8 +47,12 @@ namespace Temperance.Ludus.Services.Implementations
             {
                 var scriptArgs = new Dictionary<string, object>
                 {
-                    { "strategy", job.StrategyName },
-                    { "data_path", tempCsvPath }
+                    { "data_path", tempCsvPath },
+                    { "mode", job.Mode },
+                    { "symbol", job.Symbol },
+                    { "interval", job.Interval },
+                    { "epochs", job.Epochs },
+                    { "look_back", job.LookBack }
                 };
 
                 var pythonOutput = await _scriptRunner.RunScriptAsync("optimizer.py", scriptArgs);

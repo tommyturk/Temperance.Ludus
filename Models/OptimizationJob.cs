@@ -10,5 +10,8 @@ namespace Temperance.Ludus.Models
         public string Interval { get; set; } = string.Empty;
         public DateTime StartDate { get; set; }
         public DateTime EndDate { get; set; }
+        public string Mode { get; set; } = "finetune";
+        public int Epochs { get; set; } = 50;
+        public int LookBack { get; set; } = 60;
     }
 }

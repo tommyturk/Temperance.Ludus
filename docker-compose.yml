@@ -31,14 +31,21 @@ services:
       RabbitMQ__HostName: "rabbitmq"
       RabbitMQ__UserName: "user"
       RabbitMQ__Password: "password"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
     restart: unless-stopped
     depends_on:
       rabbitmq:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
-# Declare that we are using an existing, external network
 networks:
   temperance_network:
     external: true

@@ -1,14 +1,17 @@
-# scripts/optimizer.py
+# ---- (Pre-train & Fine-tune) ----
 import argparse
 import json
+import os
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+from sklearn.preprocessing import MinMaxScaler
+
+MODEL_DIR = "/app/models"
 
 def create_dataset(dataset, look_back=1):
-    """Create input and output sequences for the LSTM."""
     dataX, dataY = [], []
     for i in range(len(dataset) - look_back - 1):
         a = dataset[i:(i + look_back), 0]
@@ -16,80 +19,119 @@ def create_dataset(dataset, look_back=1):
         dataY.append(dataset[i + look_back, 0])
     return np.array(dataX), np.array(dataY)
 
-def main():
-    parser = argparse.ArgumentParser(description="Ludus LSTM Optimizer")
-    parser.add_argument("--strategy", type=str, required=True, help="Strategy name (for context)")
-    parser.add_argument("--data_path", type=str, required=True, help="Path to the historical data CSV")
-    args = parser.parse_args()
-
-    # --- 1. GPU Verification ---
-    gpus = tf.config.list_physical_devices('GPU')
-    if gpus:
-        print(f"TensorFlow has detected {len(gpus)} GPU(s). Using GPU.")
-        try:
-            # Set memory growth to avoid allocating all memory at once
-            for gpu in gpus:
-                tf.config.experimental.set_memory_growth(gpu, True)
-        except RuntimeError as e:
-            print(f"RuntimeError in GPU setup: {e}")
-    else:
-        print("No GPU detected by TensorFlow. Running on CPU.")
-
-    # --- 2. Data Loading and Preparation ---
-    try:
-        dataframe = pd.read_csv(args.data_path)
-        # Use only the 'ClosePrice' for this model
-        dataset = dataframe['ClosePrice'].values.astype('float32')
-    except Exception as e:
-        print(f"Error loading or processing data: {e}")
-        exit(1)
-
-    # Reshape and create sequences
-    dataset = np.reshape(dataset, (-1, 1))
-    look_back = 20  # Use the last 20 days to predict the next
-    trainX, trainY = create_dataset(dataset, look_back)
-    
-    # Reshape input to be [samples, time steps, features] as required by LSTM
-    trainX = np.reshape(trainX, (trainX.shape[0], trainX.shape[1], 1))
-
-    # --- 3. LSTM Model Definition ---
+def build_model(look_back):
+    """Builds the LSTM model architecture."""
     model = Sequential([
-        LSTM(50, input_shape=(look_back, 1), return_sequences=True), # 50 units, return sequence for next LSTM layer
-        LSTM(50), # Second LSTM layer
-        Dense(1)  # Output layer with 1 neuron for the predicted price
+        LSTM(100, input_shape=(look_back, 1), return_sequences=True),
+        Dropout(0.2),
+        LSTM(100, return_sequences=False),
+        Dropout(0.2),
+        Dense(25),
+        Dense(1)
     ])
     model.compile(optimizer='adam', loss='mean_squared_error')
+    return model
+
+def main():
+    parser = argparse.ArgumentParser(description="Ludus LSTM Optimizer")
+    parser.add_argument("--mode", type=str, choices=['pretrain', 'finetune'], required=True, help="Operating mode")
+    parser.add_argument("--symbol", type=str, required=True, help="The stock symbol (e.g., NVDA)")
+    parser.add_argument("--interval", type=str, required=True, help="The time interval (e.g., 1d)")
+    parser.add_argument("--data_path", type=str, required=True, help="Path to the historical data CSV")
+    parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
+    parser.add_argument("--look_back", type=int, default=60, help="Number of previous time steps for input")
+    args = parser.parse_args()
+
+    model_filename = os.path.join(MODEL_DIR, f"{args.symbol}_{args.interval}_base_model.keras")
+    os.makedirs(MODEL_DIR, exist_ok=True)
+
+    # --- GPU Verification ---
+    gpus = tf.config.list_physical_devices('GPU')
+    if gpus:
+        print(f"TensorFlow has detected {len(gpus)} GPU(s).")
+        for gpu in gpus: tf.config.experimental.set_memory_growth(gpu, True)
+    else:
+        print("No GPU detected. Running on CPU.")
+
+    # --- Data Loading and Scaling ---
+    dataframe = pd.read_csv(args.data_path)
+    dataset = dataframe['ClosePrice'].values.reshape(-1, 1).astype('float32')
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaled_dataset = scaler.fit_transform(dataset)
     
-    # --- 4. Model Training ---
-    print(f"Starting model training for strategy '{args.strategy}'...")
-    # In a real scenario, epochs would be a configurable parameter
-    model.fit(trainX, trainY, epochs=10, batch_size=1, verbose=0)
-    print("Model training completed.")
+    # --- Mode-Specific Logic ---
+    if args.mode == 'pretrain':
+        print(f"--- Running in PRE-TRAIN mode for {args.symbol} ---")
+        trainX, trainY = create_dataset(scaled_dataset, args.look_back)
+        if len(trainX) == 0:
+            print(f"Error: Not enough data for pre-training. Need > {args.look_back + 1} points.")
+            exit(1)
+        
+        trainX = np.reshape(trainX, (trainX.shape[0], trainX.shape[1], 1))
+        
+        model = build_model(args.look_back)
+        print(f"Starting pre-training for {args.epochs} epochs...")
+        model.fit(trainX, trainY, epochs=args.epochs, batch_size=32, verbose=0)
+        
+        # Save the newly trained base model
+        model.save(model_filename)
+        print(f"Pre-training complete. Model saved to {model_filename}")
+        status_result = { "Status": "Pre-training complete", "ModelFile": model_filename }
+        print(json.dumps(status_result))
+        return
 
-    # --- 5. "Optimization" Logic ---
-    # For this example, we'll use the model to predict the next price
-    # and adjust a parameter based on that prediction. This simulates CPO.
-    last_sequence = np.array([dataset[-look_back:, 0]])
-    last_sequence = np.reshape(last_sequence, (last_sequence.shape[0], last_sequence.shape[1], 1))
-    predicted_price = model.predict(last_sequence, verbose=0)
-    last_actual_price = dataset[-1][0]
+    elif args.mode == 'finetune':
+        print(f"--- Running in FINE-TUNE mode for {args.symbol} ---")
+        if not os.path.exists(model_filename):
+            print(f"Error: No pre-trained model found at {model_filename}. Please run pre-training first.")
+            exit(1)
 
-    # Dummy logic: if predicted price is higher, use a shorter MA period.
-    ma_period = 20
-    if predicted_price[0][0] > last_actual_price:
-        ma_period = 15 # Shorter MA for expected upward trend
+        # Load the foundational model
+        model = load_model(model_filename)
+        print(f"Loaded pre-trained model from {model_filename}")
 
-    # --- 6. Output Results as JSON ---
-    optimized_params = {
-        "Note": "This is a simulated optimization result from the LSTM model.",
-        "PredictedNextClose": float(predicted_price[0][0]),
-        "LastActualClose": float(last_actual_price),
-        "OptimizedMAPeriod": ma_period,
-        "OriginalRSIPeriod": 14 # Keep other params static for now
-    }
-    
-    # Print the final JSON result to stdout for the C# process to capture
-    print(json.dumps(optimized_params))
+        # Fine-tune on the recent data
+        trainX, trainY = create_dataset(scaled_dataset, args.look_back)
+        if len(trainX) == 0:
+            print(f"Error: Not enough recent data for fine-tuning. Need > {args.look_back + 1} points.")
+            exit(1)
+
+        trainX = np.reshape(trainX, (trainX.shape[0], trainX.shape[1], 1))
+
+        print(f"Starting fine-tuning for {args.epochs} epochs...")
+        model.fit(trainX, trainY, epochs=args.epochs, batch_size=32, verbose=0)
+        
+        # Save the updated model over the old one, so knowledge accumulates
+        model.save(model_filename)
+        print(f"Fine-tuning complete. Updated model saved to {model_filename}")
+
+        # --- "Optimization" Logic ---
+        last_sequence_scaled = scaled_dataset[-args.look_back:]
+        last_sequence_scaled = np.reshape(last_sequence_scaled, (1, args.look_back, 1))
+        predicted_price_scaled = model.predict(last_sequence_scaled, verbose=0)
+        
+        predicted_price = scaler.inverse_transform(predicted_price_scaled)
+        last_actual_price = dataset[-1][0]
+
+        # CPO Logic
+        ma_period = 20
+        rsi_oversold = 30
+        if predicted_price[0][0] > last_actual_price * 1.01:
+            ma_period = 15
+            rsi_oversold = 35
+        
+        optimized_params = {
+            "PredictedNextClose": float(predicted_price[0][0]),
+            "LastActualClose": float(last_actual_price),
+            "OptimizedParameters": {
+                "MovingAveragePeriod": ma_period,
+                "RSIOversold": rsi_oversold,
+                "RSIOverbought": 70
+            }
+        }
+        
+        # Output the final parameters
+        print(json.dumps(optimized_params))
 
 if __name__ == "__main__":
     main()
