@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Python ML libraries for build stage (GPU version)
 RUN python3.10 -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
     python3.10 -m pip install --no-cache-dir \
-    tensorflow[and-cuda]==2.15.0 \
+    tensorflow==2.15.0 \
     numpy==1.24.3 \
     pandas==2.0.3 \
     scikit-learn==1.3.0
@@ -74,7 +74,7 @@ RUN apt-get update && apt-get install -y --allow-change-held-packages --no-insta
 # *** GPU-ENABLED: Install TensorFlow with CUDA support ***
 RUN python3.10 -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
     python3.10 -m pip install --no-cache-dir \
-    tensorflow[and-cuda]==2.15.0 \
+    tensorflow==2.15.0 \
     numpy==1.24.3 \
     pandas==2.0.3 \
     scikit-learn==1.3.0
