@@ -24,14 +24,17 @@ services:
         max-file: "3"
 
   ludus-optimizer:
-    build: .
-    image: temperance.ludus-optimizer:latest
-    container_name: ludus-optimizer
+    image: temperance-ludus:latest
+    container_name: ludus-optimizer 
+    build:
+      context: .
+      dockerfile: Dockerfile
     networks:
       - temperance_network
     environment:
-      ASPNETCORE_ENVIRONMENT: "Development"
-      DOTNET_ENVIRONMENT: "Development"
+      RUNNING_IN_CONTAINER: "true"
+      ASPNETCORE_ENVIRONMENT: "Production" # <-- CHANGE THIS
+      DOTNET_ENVIRONMENT: "Production"     # <-- CHANGE THIS
       ConnectionStrings__HistoricalDatabase: 'Server=host.docker.internal,1433;Database=Historical;User ID=developer;Password=K3n5alr1532025!!;Encrypt=False;TrustServerCertificate=True;'
       ConnectionStrings__DefaultConnection: 'Server=host.docker.internal,1433;Database=TradingBotDb;User ID=developer;Password=K3n5alr1532025!!;Encrypt=False;TrustServerCertificate=True;'
       RabbitMQ__HostName: "rabbitmq"
@@ -53,13 +56,11 @@ services:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-    
     deploy:
       resources:
         reservations:
@@ -67,19 +68,15 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    
     runtime: nvidia
-    
-    # Additional GPU-related configurations
-    shm_size: '2gb'  # Increased shared memory for GPU operations
-    
+    shm_size: '20gb'
     volumes:
       - cuda_cache:/app/.nv/ComputeCache
+      - C:\Users\tommy\AppData\Local\Temp:/temp_data:rw
 
 networks:
   temperance_network:
     external: true
-
 volumes:
   cuda_cache:
     driver: local

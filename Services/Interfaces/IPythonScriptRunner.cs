@@ -8,6 +8,6 @@ namespace Temperance.Ludus.Services.Interfaces
 {
     public interface IPythonScriptRunner
     {
-        Task<string> RunScriptAsync(string scriptName, Dictionary<string, object> arguments);
+        Task<(string Output, string Error)> RunScriptAsync(string scriptName, Dictionary<string, object> arguments);
     }
 }
