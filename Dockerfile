@@ -23,10 +23,10 @@ COPY --from=build /app/publish .
 COPY --from=build /src/scripts/ ./scripts/
 
 # Install the required Python packages for the optimizer.
-# Fixed numpy version from 2.0.3 (doesn't exist) to 2.0.2
+# We remove the pinned numpy version and let pip resolve the correct dependency.
 RUN python3 -m pip install --no-cache-dir --break-system-packages \
     pandas==2.0.3 \
-    numpy==2.0.2 \
+    numpy==1.25.2 \
     Backtesting \
     optuna==3.5.0
 

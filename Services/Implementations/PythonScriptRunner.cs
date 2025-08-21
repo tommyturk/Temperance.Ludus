@@ -1,7 +1,5 @@
-﻿using Microsoft.Extensions.Options;
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text;
-using Temperance.Ludus.Confguration;
 using Temperance.Ludus.Services.Interfaces;
 
 namespace Temperance.Ludus.Services.Implementations
@@ -9,37 +7,37 @@ namespace Temperance.Ludus.Services.Implementations
     public class PythonScriptRunner : IPythonScriptRunner
     {
         private readonly ILogger<PythonScriptRunner> _logger;
-        private readonly string _ludusContainerName;
-        private const string SCriptBasePathInContainer = "/app/scripts/";
+        private const string ScriptBasePathInContainer = "/app/scripts/";
 
-        public PythonScriptRunner(ILogger<PythonScriptRunner> logger, IOptions<PythonRunnerSettings> settings)
+        public PythonScriptRunner(ILogger<PythonScriptRunner> logger)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _ludusContainerName = settings?.Value?.ContainerName
-                ?? throw new ArgumentNullException(nameof(settings.Value.ContainerName));
         }
 
         public async Task<(string Output, string Error)> RunScriptAsync(string scriptName, Dictionary<string, object> arguments)
         {
-            var scriptPathInContainer = Path.Combine(SCriptBasePathInContainer, scriptName).Replace('\\', '/');
+            var scriptPathInContainer = Path.Combine(ScriptBasePathInContainer, scriptName).Replace('\\', '/');
+
             var scriptArgsBuilder = new StringBuilder();
-            foreach(var arg in arguments)
-                scriptArgsBuilder.Append($"--{arg.Key} \"{arg.Value}\" ");
-            
-            var commandToExecute = $"python {scriptPathInContainer}{scriptArgsBuilder}";
+            foreach (var arg in arguments)
+            {
+                scriptArgsBuilder.Append($" --{arg.Key} \"{arg.Value}\"");
+            }
 
             var processStartInfo = new ProcessStartInfo
             {
-                FileName = "docker", // We are now executing the 'docker' command
-                                     // Arguments: exec [container_name] [command_to_run_inside]
-                Arguments = $"exec {_ludusContainerName} {commandToExecute}",
+                FileName = "python3",
+                // Arguments are the script path followed by the constructed arguments
+                Arguments = $"{scriptPathInContainer}{scriptArgsBuilder}",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
+                // The working directory inside the container is /app
+                WorkingDirectory = "/app"
             };
 
-            _logger.LogInformation("Executing Docker command: {FileName} {Arguments}", processStartInfo.FileName, processStartInfo.Arguments);
+            _logger.LogInformation("Executing command: {FileName} {Arguments}", processStartInfo.FileName, processStartInfo.Arguments);
 
             using var process = new Process { StartInfo = processStartInfo };
 
@@ -53,6 +51,7 @@ namespace Temperance.Ludus.Services.Implementations
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
+            // Use a cancellation token for graceful shutdown if the host requests it
             await process.WaitForExitAsync();
 
             var output = outputBuilder.ToString();
@@ -60,8 +59,9 @@ namespace Temperance.Ludus.Services.Implementations
 
             if (process.ExitCode != 0)
             {
-                _logger.LogError("Docker command for script {ScriptName} failed with exit code {ExitCode}. Error: {Error}", scriptName, process.ExitCode, error);
-                throw new InvalidOperationException($"Docker command for script {scriptName} failed with exit code {process.ExitCode}. Error: {error}");
+                _logger.LogError("Python script {ScriptName} failed with exit code {ExitCode}. Error: {Error}", scriptName, process.ExitCode, error);
+                // It's good practice to throw an exception to indicate failure
+                throw new InvalidOperationException($"Python script {scriptName} failed. Error: {error}");
             }
 
             return (output, error);

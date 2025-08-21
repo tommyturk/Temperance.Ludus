@@ -17,6 +17,8 @@ namespace Temperance.Ludus.Services.Implementations
         private readonly IPythonScriptRunner _scriptRunner;
         private readonly IResultRepository _resultRepository;
         private readonly ILogger<OptimizationJobHandler> _logger;
+        // Define the shared directory path within the container
+        private const string SharedDataPathInContainer = "/temp_data";
 
         public record PythonOptimizationOutput(
             string Status,
@@ -45,39 +47,27 @@ namespace Temperance.Ludus.Services.Implementations
                 return new OptimizationResult { Status = "Failed: No Data" };
             }
 
-            // A temporary file is still created on the HOST machine's temp directory
-            var tempFilePathOnHost = Path.Combine(Path.GetTempPath(), $"{job.Id}.csv");
+            // --- CHANGE 1: Define the file path directly within the container's shared volume ---
+            var dataPathInContainer = Path.Combine(SharedDataPathInContainer, $"{job.Id}.csv");
 
             try
             {
-                // --- CHANGE 1: Correct CSV Header for backtesting.py ---
-                // The backtesting library expects these specific column names.
+                // The CSV header for backtesting.py
                 var csvHeader = "Timestamp,Open,High,Low,Close,Volume";
                 var csvLines = historicalData.Select(p =>
                     $"{p.Timestamp:O},{p.OpenPrice},{p.HighPrice},{p.LowPrice},{p.ClosePrice},{p.Volume}"
                 );
-                await File.WriteAllLinesAsync(tempFilePathOnHost, new[] { csvHeader }.Concat(csvLines));
+                await File.WriteAllLinesAsync(dataPathInContainer, new[] { csvHeader }.Concat(csvLines));
 
-                // --- CHANGE 2: Host-to-Container Path Translation ---
-                // Get just the filename from the full host path.
-                var fileNameOnly = Path.GetFileName(tempFilePathOnHost);
-                // Construct the path as it will appear INSIDE the container via the volume mount.
-                var dataPathInContainer = $"/temp_data/{fileNameOnly}";
-
-                // --- CHANGE 3: Streamlined Script Arguments ---
-                // These now match the argparse arguments in the new optimizer.py script.
-                // The dictionary should be <string, string> to match the new runner.
                 var scriptArgs = new Dictionary<string, object>
                 {
                     { "symbol", job.Symbol },
                     { "interval", job.Interval },
-                    { "data_path", dataPathInContainer } // Pass the container-aware path
+                    { "data_path", dataPathInContainer } // Pass the correct, direct path
                 };
 
                 var (pythonOutput, pythonError) = await _scriptRunner.RunScriptAsync("optimizer.py", scriptArgs);
 
-                // --- CHANGE 4: Robust JSON Deserialization ---
-                // Find the JSON line in the script's output and parse it into our strongly-typed object.
                 var jsonLine = pythonOutput.Split('\n').FirstOrDefault(line => line.Trim().StartsWith("{") && line.Trim().EndsWith("}"));
                 if (string.IsNullOrWhiteSpace(jsonLine))
                 {
@@ -91,7 +81,6 @@ namespace Temperance.Ludus.Services.Implementations
                     throw new InvalidOperationException($"Optimization failed within the Python script. Status: {pythonResult?.Status}.");
                 }
 
-                // Construct the final result from the parsed Python output
                 var result = new OptimizationResult
                 {
                     JobId = job.Id,
@@ -99,7 +88,7 @@ namespace Temperance.Ludus.Services.Implementations
                     Symbol = job.Symbol,
                     Interval = job.Interval,
                     OptimizedParameters = pythonResult.OptimizedParameters,
-                    PerformanceMetrics = pythonResult.Performance, // Assuming you have a place to store this
+                    PerformanceMetrics = pythonResult.Performance,
                     Status = "Completed"
                 };
 
@@ -113,10 +102,10 @@ namespace Temperance.Ludus.Services.Implementations
             }
             finally
             {
-                // This is crucial: always clean up the temporary file on the HOST
-                if (File.Exists(tempFilePathOnHost))
+                // --- CHANGE 2: Clean up the file from the shared volume ---
+                if (File.Exists(dataPathInContainer))
                 {
-                    File.Delete(tempFilePathOnHost);
+                    File.Delete(dataPathInContainer);
                 }
             }
         }
