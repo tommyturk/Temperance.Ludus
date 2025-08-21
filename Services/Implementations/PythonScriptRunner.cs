@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using System.Collections;
+using System.Diagnostics;
 using System.Text;
 using Temperance.Ludus.Services.Interfaces;
 
@@ -21,19 +22,26 @@ namespace Temperance.Ludus.Services.Implementations
             var scriptArgsBuilder = new StringBuilder();
             foreach (var arg in arguments)
             {
-                scriptArgsBuilder.Append($" --{arg.Key} \"{arg.Value}\"");
-            }
+                scriptArgsBuilder.Append($" --{arg.Key} ");
 
+                if (arg.Value is IEnumerable enumerable && !(arg.Value is string))
+                {
+                    var values = new List<string>();
+                    foreach (var item in enumerable)
+                        values.Add(item.ToString());
+                    scriptArgsBuilder.Append(string.Join(" ", values));
+                }
+                else
+                    scriptArgsBuilder.Append($"\"{arg.Value}\"");
+            }
             var processStartInfo = new ProcessStartInfo
             {
                 FileName = "python3",
-                // Arguments are the script path followed by the constructed arguments
                 Arguments = $"{scriptPathInContainer}{scriptArgsBuilder}",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                // The working directory inside the container is /app
                 WorkingDirectory = "/app"
             };
 
@@ -60,7 +68,6 @@ namespace Temperance.Ludus.Services.Implementations
             if (process.ExitCode != 0)
             {
                 _logger.LogError("Python script {ScriptName} failed with exit code {ExitCode}. Error: {Error}", scriptName, process.ExitCode, error);
-                // It's good practice to throw an exception to indicate failure
                 throw new InvalidOperationException($"Python script {scriptName} failed. Error: {error}");
             }
 
