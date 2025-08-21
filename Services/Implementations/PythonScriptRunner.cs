@@ -18,8 +18,8 @@ namespace Temperance.Ludus.Services.Implementations
         public async Task<(string Output, string Error)> RunScriptAsync(string scriptName, Dictionary<string, object> arguments)
         {
             var scriptPathInContainer = Path.Combine(ScriptBasePathInContainer, scriptName).Replace('\\', '/');
-
             var scriptArgsBuilder = new StringBuilder();
+
             foreach (var arg in arguments)
             {
                 scriptArgsBuilder.Append($" --{arg.Key} ");
@@ -28,16 +28,21 @@ namespace Temperance.Ludus.Services.Implementations
                 {
                     var values = new List<string>();
                     foreach (var item in enumerable)
+                    {
                         values.Add(item.ToString());
+                    }
                     scriptArgsBuilder.Append(string.Join(" ", values));
                 }
                 else
+                {
                     scriptArgsBuilder.Append($"\"{arg.Value}\"");
+                }
             }
+
             var processStartInfo = new ProcessStartInfo
             {
                 FileName = "python3",
-                Arguments = $"{scriptPathInContainer}{scriptArgsBuilder}",
+                Arguments = $"-u {scriptPathInContainer}{scriptArgsBuilder}",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -59,7 +64,6 @@ namespace Temperance.Ludus.Services.Implementations
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
-            // Use a cancellation token for graceful shutdown if the host requests it
             await process.WaitForExitAsync();
 
             var output = outputBuilder.ToString();
