@@ -23,7 +23,8 @@ RUN apt-get update && \
     gnupg \
     build-essential \
     python3.10 \
-    python3-pip && \
+    python3-pip \
+    python3.10-dev && \
     wget https://packages.microsoft.com/config/ubuntu/22.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb && \
     dpkg -i packages-microsoft-prod.deb && \
     rm packages-microsoft-prod.deb && \
@@ -45,12 +46,20 @@ RUN wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz && \
 COPY --from=build /app/publish .
 COPY --from=build /src/scripts/ /app/scripts/
 
-# --- Install GPU-Native Python Libraries ---
-# *** THE FIX: Removed the unsupported '--break-system-packages' flag ***
+# Create a directory for the ML models
+RUN mkdir -p /app/models
+
+# --- Install GPU-Native Python Libraries with Pinned Versions ---
+# Pinning versions ensures a stable and reproducible build environment.
 RUN python3 -m pip install --no-cache-dir \
-    pandas numpy \
+    numpy==1.26.4 \
+    pandas==2.2.2 \
+    cython==3.0.10 \
+    scikit-learn==1.5.0 \
+    tensorflow==2.16.1 \
     "cupy-cuda12x" \
-    "vectorbt[cupy]" \
-    TA-Lib
+    "vectorbt[cupy]" \l
+    TA-Lib \
+    optuna==3.6.1
 
 ENTRYPOINT ["dotnet", "Temperance.Ludus.dll"]

@@ -1,0 +1,9 @@
+numpy==1.26.4
+pandas==2.2.2
+cython==3.0.10
+scikit-learn==1.5.0
+tensorflow==2.16.1
+cupy-cuda12x
+vectorbt
+TA-Lib
+optuna==3.6.1

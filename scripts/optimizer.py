@@ -5,19 +5,75 @@ import json
 import numpy as np
 import pandas as pd
 import sys
-import traceback
+import traceback    
 import time
 import vectorbt as vbt
+import warnings
+import os
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
+import tensorflow as tf
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+import optuna
 
-# --- THE DEFINITIVE FIX: Use the correct API to set the GPU wrapper ---
-# The 'array_wrapper' key must be set within the 'wrapping' dictionary.
+# --- GPU Configuration ---
+warnings.filterwarnings('ignore')
+gpus = tf.config.experimental.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+    except RuntimeError as e:
+        print(e)
+
+# --- Vectorbt Settings ---
 vbt.settings.wrapping['array_wrapper'] = 'cupy'
 vbt.settings.returns['year_freq'] = '365 days'
 vbt.settings.portfolio['init_cash'] = 100000.0
 
+# --- Helper Functions ---
+
+def create_dataset(X, y, time_steps=1):
+    Xs, ys = [], []
+    for i in range(len(X) - time_steps):
+        v = X.iloc[i:(i + time_steps)].values
+        Xs.append(v)
+        ys.append(y.iloc[i + time_steps])
+    return np.array(Xs), np.array(ys)
+
+def build_model(trial, time_steps, n_features, n_outputs):
+    model = Sequential()
+    model.add(LSTM(trial.suggest_int('units_1', 50, 200),
+                   return_sequences=trial.suggest_categorical('return_seq', [True, False]),
+                   input_shape=(time_steps, n_features)))
+    if trial.suggest_categorical('return_seq', [True, False]):
+        model.add(LSTM(trial.suggest_int('units_2', 50, 200)))
+    model.add(Dropout(trial.suggest_float('dropout', 0.1, 0.5)))
+    model.add(Dense(n_outputs, activation='linear'))
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=trial.suggest_float('learning_rate', 1e-4, 1e-2, log=True)),
+                  loss='mean_squared_error')
+    return model
+
+def objective(trial, time_steps, n_features, n_outputs, X_train, y_train, X_val, y_val):
+    model = build_model(trial, time_steps, n_features, n_outputs)
+    history = model.fit(X_train, y_train, validation_data=(X_val, y_val),
+                        epochs=50, batch_size=trial.suggest_int('batch_size', 32, 128),
+                        callbacks=[EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)],
+                        verbose=0)
+    return min(history.history['val_loss'])
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Ludus vectorbt GPU Optimizer")
-    parser.add_argument("--data_path", type=str, required=True)
+    parser = argparse.ArgumentParser(description="Ludus LSTM-Enhanced Optimizer")
+    parser.add_argument("--data_path", type=str, required=True, help="Path to the historical price data CSV file.")
+    parser.add_argument("--mode", type=str, choices=['train', 'finetune'], required=True, help="Operating mode: 'train' for initial training, 'finetune' for daily updates.")
+    parser.add_argument("--model_path", type=str, default="/app/models/lstm_optimizer.h5", help="Path to save or load the trained model.")
+    parser.add_argument("--epochs", type=int, default=100, help="Number of epochs for training or fine-tuning.")
+    parser.add_argument("--lookback", type=int, default=60, help="Number of previous time steps to use for LSTM prediction.")
+
+    # --- Parameter Ranges (kept for the brute-force stage) ---
     parser.add_argument("--ma_period_range", type=int, nargs=3, required=True)
     parser.add_argument("--rsi_period_range", type=int, nargs=3, required=True)
     parser.add_argument("--rsi_oversold_range", type=int, nargs=3, required=True)
@@ -30,17 +86,16 @@ def main():
 
     try:
         overall_start_time = time.time()
-        print("--- [DIAG] Starting vectorbt GPU Optimization ---")
+        print("--- [DIAG] Starting LSTM-Enhanced Optimization ---")
 
-        # --- Data Loading (vectorbt handles GPU transfer automatically) ---
-        start_time = time.time()
-        # Using the exact column names from your HistoricalPriceModel.cs
-        price = vbt.CSVData.from_files(args.data_path).get('ClosePrice')
-        high = vbt.CSVData.from_files(args.data_path).get('HighPrice')
-        low = vbt.CSVData.from_files(args.data_path).get('LowPrice')
-        print(f"--- [DIAG] Data Loading complete in {time.time() - start_time:.2f} seconds ---")
+        # --- Data Loading ---
+        price_df = pd.read_csv(args.data_path, index_col='Timestamp', parse_dates=True)
+        price = price_df['ClosePrice']
+        high = price_df['HighPrice']
+        low = price_df['LowPrice']
 
-        # --- Generate Parameter Ranges ---
+        # --- Stage 1: Brute-Force Parameter Search with vectorbt ---
+        print("--- [DIAG] Stage 1: Running brute-force parameter search with vectorbt ---")
         ma_periods = np.arange(*args.ma_period_range)
         std_multipliers = np.arange(*args.std_dev_multiplier_range)
         rsi_periods = np.arange(*args.rsi_period_range)
@@ -49,60 +104,121 @@ def main():
         atr_periods = np.arange(*args.atr_period_range)
         atr_multipliers = np.arange(*args.atr_multiplier_range)
 
-        # --- Massively Parallel Indicator Calculation on GPU ---
-        total_combinations = len(ma_periods) * len(std_multipliers) * len(rsi_periods) * len(rsi_oversold) * len(rsi_overbought) * len(atr_periods) * len(atr_multipliers)
-        print(f"--- [DIAG] Calculating indicators for {total_combinations:,} combinations ---")
-        
         ma = vbt.MA.run(price, window=ma_periods, short_name='ma')
         std_dev = vbt.talib('STDDEV').run(price, timeperiod=ma_periods).real
-        
-        upper_band = ma.ma_crossed + std_dev * std_multipliers
-        lower_band = ma.ma_crossed - std_dev * std_multipliers
-
+        upper_band = ma.ma + std_dev * std_multipliers
+        lower_band = ma.ma - std_dev * std_multipliers
         rsi = vbt.RSI.run(price, window=rsi_periods, short_name='rsi')
         atr = vbt.ATR.run(high, low, price, window=atr_periods, short_name='atr')
 
-        # --- Vectorized Signal Generation on GPU ---
-        entries = (price.vbt.crossed_below(lower_band)) & (rsi.rsi_crossed < rsi_oversold)
-        exits = (price.vbt.crossed_above(upper_band)) & (rsi.rsi_crossed > rsi_overbought)
-        
-        sl_stop = atr.atr_crossed * atr_multipliers
+        entries = (price.vbt.crossed_below(lower_band)) & (rsi.rsi < rsi_oversold)
+        exits = (price.vbt.crossed_above(upper_band)) & (rsi.rsi > rsi_overbought)
+        sl_stop = atr.atr * atr_multipliers
 
-        # --- Fully Vectorized Portfolio Backtest on GPU ---
-        portfolio = vbt.Portfolio.from_signals(
-            price,
-            entries=entries,
-            exits=exits,
-            sl_stop=sl_stop,
-            freq='1D' # Assuming daily data for annualization
-        )
-        
-        # --- Find Best Parameters ---
+        portfolio = vbt.Portfolio.from_signals(price, entries=entries, exits=exits, sl_stop=sl_stop, freq='1D')
+
+        # --- Find Best Parameters from Brute-Force ---
         total_trades = portfolio.total_trades()
-        valid_mask = total_trades > 5 
-        
+        valid_mask = total_trades > 5
         if not valid_mask.any():
-            raise ValueError("No parameter combination resulted in more than 5 trades.")
+            raise ValueError("No parameter combination resulted in more than 5 trades during brute-force search.")
 
         sharpe_ratio = portfolio.sharpe_ratio()
-        best_sharpe = sharpe_ratio[valid_mask].max()
         best_params_idx = sharpe_ratio[valid_mask].idxmax()
-        
         (best_ma, best_std_mult, best_rsi, best_rsi_os, best_rsi_ob, best_atr, best_atr_mult) = best_params_idx
+        
+        brute_force_results = {
+            "MovingAveragePeriod": int(best_ma),
+            "StdDevMultiplier": float(best_std_mult),
+            "RSIPeriod": int(best_rsi),
+            "RSIOversold": int(best_rsi_os),
+            "RSIOverbought": int(best_rsi_ob),
+            "AtrPeriod": int(best_atr),
+            "AtrMultiplier": float(best_atr_mult)
+        }
+        
+        print(f"--- [DIAG] Brute-force best parameters found: {brute_force_results} ---")
 
+
+        # --- Stage 2: LSTM Model Training / Fine-tuning ---
+        print(f"--- [DIAG] Stage 2: Preparing data for LSTM model ({args.mode} mode) ---")
+
+        # --- Feature Engineering ---
+        features = pd.DataFrame(index=price_df.index)
+        features['returns'] = price_df['ClosePrice'].pct_change()
+        features['volatility'] = features['returns'].rolling(window=21).std()
+        features['momentum'] = price_df['ClosePrice'] / price_df['ClosePrice'].rolling(window=21).mean()
+        features.dropna(inplace=True)
+
+        # --- Target Variable (Optimal Parameters) ---
+        # In a real-world scenario, you'd run the brute-force search over rolling windows
+        # to generate a time series of optimal parameters. For this example, we'll use
+        # the single set of brute-force results as a constant target.
+        targets = pd.DataFrame([brute_force_results] * len(features), index=features.index)
+
+        # --- Scaling ---
+        feature_scaler = MinMaxScaler(feature_range=(0, 1))
+        target_scaler = MinMaxScaler(feature_range=(0, 1))
+        
+        scaled_features = feature_scaler.fit_transform(features)
+        scaled_targets = target_scaler.fit_transform(targets)
+        
+        scaled_features_df = pd.DataFrame(scaled_features, index=features.index, columns=features.columns)
+
+        # --- Create Time-series Dataset ---
+        X, y = create_dataset(scaled_features_df, pd.DataFrame(scaled_targets, index=targets.index), time_steps=args.lookback)
+
+        if args.mode == 'train':
+            print("--- [DIAG] Training new LSTM model with Optuna hyperparameter search ---")
+            X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+
+            study = optuna.create_study(direction='minimize')
+            study.optimize(lambda trial: objective(trial, args.lookback, X.shape[2], y.shape[1], X_train, y_train, X_val, y_val), n_trials=20)
+            
+            print(f"--- [DIAG] Best hyperparameters found: {study.best_params} ---")
+            model = build_model(study.best_trial, args.lookback, X.shape[2], y.shape[1])
+            
+            checkpoint = ModelCheckpoint(args.model_path, save_best_only=True, monitor='val_loss', mode='min')
+            early_stopping = EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True)
+
+            model.fit(X_train, y_train, validation_data=(X_val, y_val),
+                      epochs=args.epochs, batch_size=study.best_params['batch_size'],
+                      callbacks=[early_stopping, checkpoint], verbose=1)
+
+        elif args.mode == 'finetune':
+            print(f"--- [DIAG] Fine-tuning existing model from {args.model_path} ---")
+            if not os.path.exists(args.model_path):
+                raise FileNotFoundError(f"Model file not found at {args.model_path}. Run in 'train' mode first.")
+            model = load_model(args.model_path)
+            model.fit(X, y, epochs=args.epochs, batch_size=32, verbose=1)
+            model.save(args.model_path)
+
+
+        # --- Predict Parameters for the Next Day ---
+        print("--- [DIAG] Predicting parameters for the next trading day ---")
+        last_lookback_features = scaled_features_df.iloc[-args.lookback:].values
+        next_day_input = np.reshape(last_lookback_features, (1, args.lookback, last_lookback_features.shape[1]))
+        
+        predicted_scaled_params = model.predict(next_day_input)
+        predicted_params = target_scaler.inverse_transform(predicted_scaled_params)[0]
+
+        final_parameters = {
+            "MovingAveragePeriod": int(round(predicted_params[0])),
+            "StdDevMultiplier": float(round(predicted_params[1], 2)),
+            "RSIPeriod": int(round(predicted_params[2])),
+            "RSIOversold": int(round(predicted_params[3])),
+            "RSIOverbought": int(round(predicted_params[4])),
+            "AtrPeriod": int(round(predicted_params[5])),
+            "AtrMultiplier": float(round(predicted_params[6], 2))
+        }
+
+        # --- Final Output ---
         result = {
             "Status": "Completed",
-            "OptimizedParameters": {
-                "MovingAveragePeriod": int(best_ma),
-                "StdDevMultiplier": float(best_std_mult),
-                "RSIPeriod": int(best_rsi),
-                "RSIOversold": int(best_rsi_os),
-                "RSIOverbought": int(best_rsi_ob),
-                "AtrPeriod": int(best_atr),
-                "AtrMultiplier": float(best_atr_mult)
-            },
-            "Performance": {
-                "SharpeRatio": float(best_sharpe),
+            "Mode": args.mode,
+            "OptimizedParameters": final_parameters,
+            "BruteForcePerformance": {
+                "SharpeRatio": float(portfolio.sharpe_ratio()[best_params_idx]),
                 "TotalReturn": float(portfolio.total_return()[best_params_idx]),
                 "TotalTrades": int(portfolio.total_trades()[best_params_idx]),
                 "WinRatePct": float(portfolio.win_rate()[best_params_idx] * 100),
