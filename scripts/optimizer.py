@@ -9,11 +9,14 @@ import traceback
 import time
 import vectorbt as vbt
 
-# --- This is the correct syntax to enable the GPU backend ---
-vbt.settings['array_wrapper'] = 'cupy'
+# --- THE DEFINITIVE FIX: Use the correct API to set the GPU wrapper ---
+# The 'array_wrapper' key must be set within the 'wrapping' dictionary.
+vbt.settings.wrapping['array_wrapper'] = 'cupy'
+vbt.settings.returns['year_freq'] = '365 days'
+vbt.settings.portfolio['init_cash'] = 100000.0
 
 def main():
-    parser = argparse.ArgumentParser(description="Ludus GPU-Accelerated Vectorized Optimizer")
+    parser = argparse.ArgumentParser(description="Ludus vectorbt GPU Optimizer")
     parser.add_argument("--data_path", type=str, required=True)
     parser.add_argument("--ma_period_range", type=int, nargs=3, required=True)
     parser.add_argument("--rsi_period_range", type=int, nargs=3, required=True)
@@ -26,88 +29,83 @@ def main():
     args = parser.parse_args()
 
     try:
-        # --- [DIAG] GPU Detection ---
-        import cupy as cp
-        try:
-            gpu_name = cp.cuda.runtime.getDeviceProperties(0)['name']
-            print(f"--- [DIAG] GPU Detected and Initialized: {gpu_name.decode('utf-8')} ---")
-        except Exception as e:
-            print(f"--- [DIAG] GPU NOT DETECTED. Error: {e} ---")
-            sys.exit(1) # Exit if GPU is not found
-
         overall_start_time = time.time()
-        print("--- [DIAG] Starting Optimization ---")
-        
-        # --- Corrected Data Loading using pandas ---
-        start_time = time.time()
-        df = pd.read_csv(args.data_path)
-        df['Timestamp'] = pd.to_datetime(df['Timestamp'])
-        df.set_index('Timestamp', inplace=True)
-        price = df['ClosePrice']
-        high = df['HighPrice']
-        low = df['LowPrice']
-        print(f"--- [DIAG] Data Loading complete in {time.time() - start_time:.2f} seconds. Shape: {price.shape} ---")
+        print("--- [DIAG] Starting vectorbt GPU Optimization ---")
 
-        # --- Generate parameter combinations ---
+        # --- Data Loading (vectorbt handles GPU transfer automatically) ---
+        start_time = time.time()
+        # Using the exact column names from your HistoricalPriceModel.cs
+        price = vbt.CSVData.from_files(args.data_path).get('ClosePrice')
+        high = vbt.CSVData.from_files(args.data_path).get('HighPrice')
+        low = vbt.CSVData.from_files(args.data_path).get('LowPrice')
+        print(f"--- [DIAG] Data Loading complete in {time.time() - start_time:.2f} seconds ---")
+
+        # --- Generate Parameter Ranges ---
         ma_periods = np.arange(*args.ma_period_range)
-        rsi_periods = np.arange(*args.rsi_period_range)
-        rsi_oversold_levels = np.arange(*args.rsi_oversold_range)
-        rsi_overbought_levels = np.arange(*args.rsi_overbought_range)
         std_multipliers = np.arange(*args.std_dev_multiplier_range)
+        rsi_periods = np.arange(*args.rsi_period_range)
+        rsi_oversold = np.arange(*args.rsi_oversold_range)
+        rsi_overbought = np.arange(*args.rsi_overbought_range)
         atr_periods = np.arange(*args.atr_period_range)
         atr_multipliers = np.arange(*args.atr_multiplier_range)
+
+        # --- Massively Parallel Indicator Calculation on GPU ---
+        total_combinations = len(ma_periods) * len(std_multipliers) * len(rsi_periods) * len(rsi_oversold) * len(rsi_overbought) * len(atr_periods) * len(atr_multipliers)
+        print(f"--- [DIAG] Calculating indicators for {total_combinations:,} combinations ---")
         
-        # --- Indicator Calculation (Purely using vectorbt's GPU-native functions) ---
-        start_time = time.time()
         ma = vbt.MA.run(price, window=ma_periods, short_name='ma')
-        std = price.vbt.rolling_std(window=ma_periods)
+        std_dev = vbt.talib('STDDEV').run(price, timeperiod=ma_periods).real
         
-        upper_band = ma.ma + std.rolling_std * std_multipliers
-        lower_band = ma.ma - std.rolling_std * std_multipliers
+        upper_band = ma.ma_crossed + std_dev * std_multipliers
+        lower_band = ma.ma_crossed - std_dev * std_multipliers
 
         rsi = vbt.RSI.run(price, window=rsi_periods, short_name='rsi')
         atr = vbt.ATR.run(high, low, price, window=atr_periods, short_name='atr')
-        
-        long_entries = price.vbt.crossed_below(lower_band) & (rsi.rsi < rsi_oversold_levels)
-        short_entries = price.vbt.crossed_above(upper_band) & (rsi.rsi > rsi_overbought_levels)
-        
-        long_sl_stop = atr.atr * atr_multipliers
-        print(f"--- [DIAG] Indicator calculation complete in {time.time() - start_time:.2f} seconds. ---")
 
-        # --- Portfolio Backtesting (Purely on GPU) ---
-        start_time = time.time()
+        # --- Vectorized Signal Generation on GPU ---
+        entries = (price.vbt.crossed_below(lower_band)) & (rsi.rsi_crossed < rsi_oversold)
+        exits = (price.vbt.crossed_above(upper_band)) & (rsi.rsi_crossed > rsi_overbought)
+        
+        sl_stop = atr.atr_crossed * atr_multipliers
+
+        # --- Fully Vectorized Portfolio Backtest on GPU ---
         portfolio = vbt.Portfolio.from_signals(
             price,
-            entries=long_entries,
-            exits=short_entries,
-            sl_stop=long_sl_stop,
-            freq='1h' 
+            entries=entries,
+            exits=exits,
+            sl_stop=sl_stop,
+            freq='1D' # Assuming daily data for annualization
         )
-        print(f"--- [DIAG] Portfolio backtesting complete in {time.time() - start_time:.2f} seconds. ---")
+        
+        # --- Find Best Parameters ---
+        total_trades = portfolio.total_trades()
+        valid_mask = total_trades > 5 
+        
+        if not valid_mask.any():
+            raise ValueError("No parameter combination resulted in more than 5 trades.")
 
-        # --- Finding Best Parameters ---
-        start_time = time.time()
-        valid_sharpe = portfolio.sharpe_ratio()[portfolio.total_trades() > 0]
-        if valid_sharpe.empty:
-            raise ValueError("No trades were executed for any parameter combination.")
-
-        best_params_idx = valid_sharpe.idxmax()
-        best_performance = valid_sharpe.max()
+        sharpe_ratio = portfolio.sharpe_ratio()
+        best_sharpe = sharpe_ratio[valid_mask].max()
+        best_params_idx = sharpe_ratio[valid_mask].idxmax()
         
         (best_ma, best_std_mult, best_rsi, best_rsi_os, best_rsi_ob, best_atr, best_atr_mult) = best_params_idx
-        print(f"--- [DIAG] Best parameter search complete in {time.time() - start_time:.2f} seconds. ---")
 
         result = {
             "Status": "Completed",
             "OptimizedParameters": {
-                "MovingAveragePeriod": int(best_ma), "StdDevMultiplier": float(best_std_mult),
-                "RSIPeriod": int(best_rsi), "RSIOversold": int(best_rsi_os),
-                "RSIOverbought": int(best_rsi_ob), "AtrPeriod": int(best_atr),
+                "MovingAveragePeriod": int(best_ma),
+                "StdDevMultiplier": float(best_std_mult),
+                "RSIPeriod": int(best_rsi),
+                "RSIOversold": int(best_rsi_os),
+                "RSIOverbought": int(best_rsi_ob),
+                "AtrPeriod": int(best_atr),
                 "AtrMultiplier": float(best_atr_mult)
             },
             "Performance": {
-                "SharpeRatio": float(best_performance), "TotalReturn": float(portfolio.total_return()[best_params_idx]),
-                "TotalTrades": int(portfolio.total_trades()[best_params_idx]), "WinRatePct": float(portfolio.win_rate()[best_params_idx] * 100),
+                "SharpeRatio": float(best_sharpe),
+                "TotalReturn": float(portfolio.total_return()[best_params_idx]),
+                "TotalTrades": int(portfolio.total_trades()[best_params_idx]),
+                "WinRatePct": float(portfolio.win_rate()[best_params_idx] * 100),
                 "MaxDrawdownPct": float(portfolio.max_drawdown()[best_params_idx] * 100)
             }
         }
