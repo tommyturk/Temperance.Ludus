@@ -17,50 +17,29 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
   ludus-optimizer:
     image: temperance-ludus:latest
-    container_name: ludus-optimizer 
+    container_name: ludus-optimizer
     build:
       context: .
       dockerfile: Dockerfile
     networks:
       - temperance_network
     environment:
-      RUNNING_IN_CONTAINER: "true"
-      ASPNETCORE_ENVIRONMENT: "Production" # <-- CHANGE THIS
-      DOTNET_ENVIRONMENT: "Production"     # <-- CHANGE THIS
-      ConnectionStrings__HistoricalDatabase: 'Server=host.docker.internal,1433;Database=Historical;User ID=developer;Password=K3n5alr1532025!!;Encrypt=False;TrustServerCertificate=True;'
-      ConnectionStrings__DefaultConnection: 'Server=host.docker.internal,1433;Database=TradingBotDb;User ID=developer;Password=K3n5alr1532025!!;Encrypt=False;TrustServerCertificate=True;'
-      RabbitMQ__HostName: "rabbitmq"
-      RabbitMQ__UserName: "user"
-      RabbitMQ__Password: "password"
-      
-      NVIDIA_VISIBLE_DEVICES: "all"
-      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
-      CUDA_CACHE_DISABLE: "0"
-      TF_FORCE_GPU_ALLOW_GROWTH: "true"
-      TF_CPP_MIN_LOG_LEVEL: "1"
-      
-      Logging__LogLevel__Default: "Information"
-      Logging__LogLevel__Temperance.Ludus: "Debug"
-    
+      - DOTNET_ENVIRONMENT=Production
+      - ConnectionStrings__HistoricalDatabase=Server=host.docker.internal,1433;Database=Historical;User ID=developer;Password=K3n5alr1532025!!;Encrypt=False;TrustServerCertificate=True;
+      - ConnectionStrings__DefaultConnection=Server=host.docker.internal,1433;Database=TradingBotDb;User ID=developer;Password=K3n5alr1532025!!;Encrypt=False;TrustServerCertificate=True;
+      - RabbitMQ__HostName=rabbitmq
+      - RabbitMQ__UserName=user
+      - RabbitMQ__Password=password
     restart: unless-stopped
     depends_on:
       rabbitmq:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    # This is the modern and correct way to request GPU resources
     deploy:
       resources:
         reservations:
@@ -68,15 +47,11 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    runtime: nvidia
-    shm_size: '20gb'
-    volumes:
-      - cuda_cache:/app/.nv/ComputeCache
-      - C:\Users\tommy\AppData\Local\Temp:/temp_data:rw
+
+volumes:
+  cuda_cache:
+    driver: local
 
 networks:
   temperance_network:
     external: true
-volumes:
-  cuda_cache:
-    driver: local

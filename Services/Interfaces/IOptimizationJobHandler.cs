@@ -5,6 +5,6 @@ namespace Temperance.Ludus.Services.Interfaces
 {
     public interface IOptimizationJobHandler
     {
-        Task ProcessJobAsync(OptimizationJob job);
+        Task<PythonScriptResult> ProcessJobAsync(OptimizationJob job);
     }
 }

@@ -26,9 +26,12 @@ public class PythonScriptRunner : IPythonScriptRunner
         // The script path is the first argument, followed by the dictionary values.
         var argsBuilder = new StringBuilder();
         argsBuilder.Append($"\"{scriptPath}\"");
-        foreach (var argValue in arguments.Values)
+        foreach (var arg in arguments)
         {
-            argsBuilder.Append($" \"{argValue}\"");
+            if (arg.Key.StartsWith("-"))
+                argsBuilder.Append($" {arg.Key} \"{arg.Value}\"");
+            else
+                argsBuilder.Append($" \"{arg.Value}\"");
         }
 
         var processStartInfo = new ProcessStartInfo

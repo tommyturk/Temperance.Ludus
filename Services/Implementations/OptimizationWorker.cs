@@ -7,75 +7,59 @@ namespace Temperance.Ludus.Services.Implementations
     public class OptimizationWorker : BackgroundService
     {
         private readonly ILogger<OptimizationWorker> _logger;
-        private readonly IOptimizationJobHandler _optimizationHandler;
+        private readonly IServiceProvider _serviceProvider;
         private readonly IMessageBusClient _messageBusClient;
 
-        public OptimizationWorker(ILogger<OptimizationWorker> logger, IOptimizationJobHandler optimizationHandler, IMessageBusClient busClient)
+        public OptimizationWorker(ILogger<OptimizationWorker> logger, IServiceProvider serviceProvider, IMessageBusClient busClient)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _optimizationHandler = optimizationHandler ?? throw new ArgumentNullException(nameof(optimizationHandler));
+            _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
             _messageBusClient = busClient;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("OptimizationWorker starting up...");
+            _logger.LogInformation("OptimizationWorker waiting for application to start...");
+            await Task.Delay(5000, stoppingToken);
 
-            try
+            _messageBusClient.StartConsuming("optimization_jobs", async message =>
             {
-                await Task.Delay(5000, stoppingToken);
+                _logger.LogInformation("New job received. Processing in a new scope...");
 
-                _logger.LogInformation("Connecting to RabbitMQ and starting to consume messages...");
+                await using var scope = _serviceProvider.CreateAsyncScope();
+                var optimizationHandler = scope.ServiceProvider.GetRequiredService<IOptimizationJobHandler>();
 
-                _messageBusClient.StartConsuming("optimization_jobs", async message =>
+                try
                 {
-                    _logger.LogInformation("Job received. Processing...");
-
-                    try
+                    var job = JsonSerializer.Deserialize<OptimizationJob>(message);
+                    if (job != null)
                     {
-                        var job = JsonSerializer.Deserialize<OptimizationJob>(message);
-                        if (job != null)
-                        {
-                            _logger.LogInformation("Processing optimization job for {Symbol} - {StrategyName}", job.Symbol, job.StrategyName);
-                            var result = await _optimizationHandler.ProcessJobAsync(job);
-                            _logger.LogInformation("Job processing completed with status: {Status}", result.Status);
-                        }
-                        else
-                        {
-                            _logger.LogError("Failed to deserialize optimization job from message: {message}", message);
-                        }
+                        _logger.LogInformation("Processing job {JobId} for {Symbol} - {StrategyName}", job.JobId, job.Symbol, job.StrategyName);
+                        await optimizationHandler.ProcessJobAsync(job);
+                        _logger.LogInformation("Job {JobId} processing completed.", job.JobId);
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        _logger.LogError(ex, "Error processing optimization job");
-                        throw;
+                        _logger.LogError("Failed to deserialize optimization job from message: {message}", message);
                     }
-                });
-
-                _logger.LogInformation("OptimizationWorker is now running and listening for messages.");
-
-                while (!stoppingToken.IsCancellationRequested)
-                {
-                    await Task.Delay(10000, stoppingToken);
-                    _logger.LogDebug("OptimizationWorker heartbeat - still running...");
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                _logger.LogInformation("OptimizationWorker is stopping due to cancellation.");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogCritical(ex, "OptimizationWorker failed with critical error. Service will exit.");
-                throw;
-            }
-        }
+                catch (JsonException jsonEx)
+                {
+                    _logger.LogError(jsonEx, "JSON Deserialization error for message: {message}", message);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "An unexpected error occurred while processing message. It will be re-queued.");
+                    throw;
+                }
+            });
 
-        public override async Task StopAsync(CancellationToken cancellationToken)
-        {
-            _logger.LogInformation("OptimizationWorker is stopping...");
-            await base.StopAsync(cancellationToken);
-            _logger.LogInformation("OptimizationWorker stopped.");
+            _logger.LogInformation("OptimizationWorker is now running and listening for messages.");
+
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                await Task.Delay(Timeout.Infinite, stoppingToken);
+            }
         }
     }
 }
