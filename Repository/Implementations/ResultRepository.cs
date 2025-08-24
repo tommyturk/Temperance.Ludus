@@ -23,9 +23,9 @@ namespace Temperance.Ludus.Repository.Implementations
 
         public async Task SaveOptimizationResultAsync(OptimizationResult result)
         {
-            if (result.Status != "Completed" || result.OptimizedParameters == null)
+            if (result.ParametersJson == null)
             {
-                _logger.LogWarning("Cannot save non-completed or empty result for JobId {JobId}", result.JobId);
+                _logger.LogWarning("Cannot save non-completed or empty result for JobId {JobId}", result.Id);
                 return;
             }
 

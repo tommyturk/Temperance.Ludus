@@ -1,121 +1,118 @@
-﻿using System.Text.Json;
+﻿using System.Globalization;
+using System.Text;
+using System.Text.Json;
 using Temperance.Ludus.Models;
-using Temperance.Ludus.Repository.Interfaces;
 using Temperance.Ludus.Services.Interfaces;
 
-namespace Temperance.Ludus.Services.Implementations
+namespace Temperance.Ludus.Services.Implementations;
+
+public class OptimizationJobHandler : IOptimizationJobHandler
 {
-    public class OptimizationJobHandler : IOptimizationJobHandler
+    private readonly ILogger<OptimizationJobHandler> _logger;
+    private readonly IPythonScriptRunner _pythonScriptRunner;
+    private readonly IHistoricalDataService _historicalDataService;
+
+    public OptimizationJobHandler(
+        ILogger<OptimizationJobHandler> logger,
+        IPythonScriptRunner pythonScriptRunner,
+        IHistoricalDataService historicalDataService)
     {
-        private readonly IHistoricalDataService _historicalDataService;
-        private readonly IPythonScriptRunner _scriptRunner;
-        private readonly IResultRepository _resultRepository;
-        private readonly ILogger<OptimizationJobHandler> _logger;
-        private readonly string _sharedDataPath;
+        _logger = logger;
+        _pythonScriptRunner = pythonScriptRunner;
+        _historicalDataService = historicalDataService;
+    }
 
-        // This record now matches the new JSON output from the Python script
-        public record PythonOptimizationOutput(
-            string Status,
-            string Mode,
-            Dictionary<string, object> OptimizedParameters,
-            Dictionary<string, object> BruteForcePerformance
-        );
+    public async Task ProcessJobAsync(OptimizationJob job)
+    {
+        _logger.LogInformation("Processing optimization job {JobId} for {Symbol} [{Interval}]...",
+            job.JobId, job.Symbol, job.Interval);
 
-        public OptimizationJobHandler(
-            IHistoricalDataService historicalDataService,
-            IPythonScriptRunner scriptRunner,
-            IResultRepository resultRepository,
-            ILogger<OptimizationJobHandler> logger,
-            IConfiguration configuration,
-            IHostEnvironment environment)
+        var inputCsvPath = Path.Combine(Path.GetTempPath(), $"{job.JobId}_input.csv");
+        var outputJsonPath = Path.Combine(Path.GetTempPath(), $"{job.JobId}_output.json");
+
+        try
         {
-            _historicalDataService = historicalDataService;
-            _scriptRunner = scriptRunner;
-            _resultRepository = resultRepository;
-            _logger = logger;
+            var allPrices = await _historicalDataService.GetHistoricalPricesAsync(job.Symbol, job.Interval, job.StartDate, job.EndDate);
 
-            // This logic correctly handles local vs. Docker paths
-            _sharedDataPath = "/temp_data";
-            if (environment.IsDevelopment())
+            var filteredPrices = allPrices
+                .Where(p => p.Timestamp >= job.StartDate && p.Timestamp <= job.EndDate)
+                .OrderBy(p => p.Timestamp)
+                .ToList();
+
+            if (!filteredPrices.Any())
             {
-                _sharedDataPath = configuration.GetValue<string>("PythonSettings:SharedDataPath")
-                    ?? throw new InvalidOperationException("PythonSettings:SharedDataPath is not configured.");
+                _logger.LogWarning("No historical data found for job {JobId} within the specified date range. Skipping.", job.JobId);
+                return;
+            }
+
+            var csvBuilder = new StringBuilder();
+            csvBuilder.AppendLine("Timestamp,OpenPrice,HighPrice,LowPrice,ClosePrice,Volume");
+            foreach (var price in filteredPrices)
+            {
+                csvBuilder.AppendLine(
+                    $"{price.Timestamp:o}," + // ISO 8601 format
+                    $"{price.OpenPrice.ToString(CultureInfo.InvariantCulture)}," +
+                    $"{price.HighPrice.ToString(CultureInfo.InvariantCulture)}," +
+                    $"{price.LowPrice.ToString(CultureInfo.InvariantCulture)}," +
+                    $"{price.ClosePrice.ToString(CultureInfo.InvariantCulture)}," +
+                    $"{price.Volume.ToString(CultureInfo.InvariantCulture)}"
+                );
+            }
+            var historicalDataCsv = csvBuilder.ToString();
+
+            await File.WriteAllTextAsync(inputCsvPath, historicalDataCsv);
+            _logger.LogInformation("Wrote {Count} data points for job {JobId} to {InputPath}",
+                filteredPrices.Count, job.JobId, inputCsvPath);
+
+            var scriptArgs = new Dictionary<string, string>
+            {
+                { "input_csv_path", inputCsvPath },
+                { "output_json_path", outputJsonPath }
+            };
+            await _pythonScriptRunner.RunScriptAsync("optimizer.py", scriptArgs);
+
+            var resultJson = await File.ReadAllTextAsync(outputJsonPath);
+            var result = JsonSerializer.Deserialize<PythonScriptResult>(resultJson,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+            if (result is { Status: "success", BestParameters: not null, Performance: not null })
+            {
+                _logger.LogInformation(
+                   "Successfully found optimal parameters for Job {JobId}. Performance: {Performance:F4}. Parameters: {Parameters}",
+                   job.JobId, result.Performance, JsonSerializer.Serialize(result.BestParameters));
+
+                var optimizationResult = new OptimizationResult
+                {
+                    Id = Guid.NewGuid(), // The primary key for this result entry
+                    BacktestRunId = job.JobId,
+                    StrategyName = "MeanReversion_BB_RSI", // You might pass this in the job later
+                    Symbol = job.Symbol,
+                    Interval = job.Interval,
+                    ParametersJson = JsonSerializer.Serialize(result.BestParameters),
+                    TotalReturn = (decimal)result.Performance, // Assuming performance is total return
+                    // You would calculate other metrics like Sharpe Ratio, Win Rate etc. here if available
+                    TimestampUtc = DateTime.UtcNow
+                };
+
+                await _resultRepository.SaveOptimizationResultAsync(optimizationResult);
+                // --- END OF INTEGRATION ---
+            }
+            else
+            {
+                _logger.LogWarning("Optimization script for Job {JobId} reported an issue: {Message}",
+                    job.JobId, result?.Message ?? "No message provided.");
             }
         }
-
-        public async Task<OptimizationResult> ProcessJobAsync(OptimizationJob job)
+        catch (Exception ex)
         {
-            // --- 1. Prepare Data ---
-            _logger.LogInformation("Fetching historical data for job {JobId} ({Mode})", job.Id, job.Mode);
-            var historicalData = await _historicalDataService.GetHistoricalPricesAsync(
-                job.Symbol, job.Interval, job.StartDate, job.EndDate);
-
-            if (historicalData == null || !historicalData.Any())
-                return new OptimizationResult { JobId = job.Id, Status = "Failed: No Data" };
-
-            var dataPath = Path.Combine(_sharedDataPath, $"{job.Id}.csv");
-            var csvHeader = "Timestamp,OpenPrice,HighPrice,LowPrice,ClosePrice,Volume";
-            var csvLines = historicalData.Select(p =>
-                $"{p.Timestamp:O},{p.OpenPrice},{p.HighPrice},{p.LowPrice},{p.ClosePrice},{p.Volume}"
-            );
-            await File.WriteAllLinesAsync(dataPath, new[] { csvHeader }.Concat(csvLines));
-
-            // --- 2. Define Script Arguments (THE FIX IS HERE) ---
-            // This now includes all the arguments the new python script requires.
-            var scriptArgs = new Dictionary<string, object>
-            {
-                { "data_path", dataPath },
-                { "mode", job.Mode }, // <-- Required argument is now passed
-                { "model_path", "/app/models/lstm_optimizer.h5" },
-                { "epochs", job.Epochs },
-                { "lookback", job.LookBack }
-            };
-
-            // Add the parameter ranges, these could come from the job or config in the future
-            scriptArgs.Add("ma_period_range", new[] { 20, 201, 20 });
-            scriptArgs.Add("rsi_period_range", new[] { 7, 31, 3 });
-            scriptArgs.Add("rsi_oversold_range", new[] { 15, 41, 5 });
-            scriptArgs.Add("rsi_overbought_range", new[] { 60, 86, 5 });
-            scriptArgs.Add("std_dev_multiplier_range", new[] { 1.5, 3.6, 0.5 });
-            scriptArgs.Add("atr_period_range", new[] { 7, 29, 3 });
-            scriptArgs.Add("atr_multiplier_range", new[] { 1.0, 5.1, 0.5 });
-
-            // --- 3. Execute the GPU Optimizer ---
-            _logger.LogInformation("Invoking GPU optimizer script 'optimizer.py'...");
-            var (pythonOutput, pythonError) = await _scriptRunner.RunScriptAsync("optimizer.py", scriptArgs);
-
-            // --- 4. Process Results ---
-            if (!string.IsNullOrWhiteSpace(pythonError))
-            {
-                _logger.LogError("Python script failed. Error: {Error}", pythonError);
-                return new OptimizationResult { JobId = job.Id, Status = $"Failed: {pythonError}" };
-            }
-
-            var jsonLine = pythonOutput.Split('\n').FirstOrDefault(line => line.Trim().StartsWith("{") && line.Trim().EndsWith("}"));
-            if (string.IsNullOrWhiteSpace(jsonLine))
-            {
-                throw new InvalidOperationException($"Python script did not return valid JSON. Output: {pythonOutput}");
-            }
-
-            var pythonResult = JsonSerializer.Deserialize<PythonOptimizationOutput>(jsonLine, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-
-            var result = new OptimizationResult
-            {
-                JobId = job.Id,
-                StrategyName = job.StrategyName,
-                Symbol = job.Symbol,
-                Interval = job.Interval,
-                OptimizedParameters = pythonResult.OptimizedParameters,
-                PerformanceMetrics = pythonResult.BruteForcePerformance, // Using brute-force performance for now
-                Status = "Completed"
-            };
-
-            await _resultRepository.SaveOptimizationResultAsync(result);
-
-            if (File.Exists(dataPath))
-                File.Delete(dataPath);
-
-            return result;
+            _logger.LogError(ex, "An unhandled exception occurred while processing job {JobId}.", job.JobId);
+            throw;
+        }
+        finally
+        {
+            if (File.Exists(inputCsvPath)) File.Delete(inputCsvPath);
+            if (File.Exists(outputJsonPath)) File.Delete(outputJsonPath);
+            _logger.LogDebug("Cleaned up temporary files for Job {JobId}", job.JobId);
         }
     }
 }

@@ -1,13 +1,11 @@
-﻿namespace Temperance.Ludus.Models
+﻿public class OptimizationResult
 {
-    public class OptimizationResult
-    {
-        public Guid JobId { get; set; }
-        public string StrategyName { get; set; } = string.Empty;
-        public string Symbol { get; set; } = string.Empty;
-        public string Interval { get; set; } = string.Empty;
-        public string Status { get; set; } = string.Empty;
-        public Dictionary<string, object>? OptimizedParameters { get; set; }
-        public Dictionary<string, object>? PerformanceMetrics { get; set; }
-    }
+    public Guid Id { get; set; }
+    public Guid BacktestRunId { get; set; }
+    public string StrategyName { get; set; } = string.Empty;
+    public string Symbol { get; set; } = string.Empty;
+    public string Interval { get; set; } = string.Empty;
+    public string ParametersJson { get; set; } = string.Empty;
+    public decimal TotalReturn { get; set; }
+    public DateTime TimestampUtc { get; set; }
 }
