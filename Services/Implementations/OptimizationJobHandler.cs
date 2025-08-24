@@ -11,24 +11,36 @@ namespace Temperance.Ludus.Services.Implementations
         private readonly IPythonScriptRunner _scriptRunner;
         private readonly IResultRepository _resultRepository;
         private readonly ILogger<OptimizationJobHandler> _logger;
-        private const string SharedDataPathInContainer = "/temp_data";
+        private readonly string _sharedDataPath;
 
+        // This record now matches the new JSON output from the Python script
         public record PythonOptimizationOutput(
             string Status,
+            string Mode,
             Dictionary<string, object> OptimizedParameters,
-            Dictionary<string, object> Performance
+            Dictionary<string, object> BruteForcePerformance
         );
 
         public OptimizationJobHandler(
             IHistoricalDataService historicalDataService,
             IPythonScriptRunner scriptRunner,
             IResultRepository resultRepository,
-            ILogger<OptimizationJobHandler> logger)
+            ILogger<OptimizationJobHandler> logger,
+            IConfiguration configuration,
+            IHostEnvironment environment)
         {
             _historicalDataService = historicalDataService;
             _scriptRunner = scriptRunner;
             _resultRepository = resultRepository;
             _logger = logger;
+
+            // This logic correctly handles local vs. Docker paths
+            _sharedDataPath = "/temp_data";
+            if (environment.IsDevelopment())
+            {
+                _sharedDataPath = configuration.GetValue<string>("PythonSettings:SharedDataPath")
+                    ?? throw new InvalidOperationException("PythonSettings:SharedDataPath is not configured.");
+            }
         }
 
         public async Task<OptimizationResult> ProcessJobAsync(OptimizationJob job)
@@ -41,45 +53,32 @@ namespace Temperance.Ludus.Services.Implementations
             if (historicalData == null || !historicalData.Any())
                 return new OptimizationResult { JobId = job.Id, Status = "Failed: No Data" };
 
-            var dataPathInContainer = Path.Combine(SharedDataPathInContainer, $"{job.Id}.csv");
+            var dataPath = Path.Combine(_sharedDataPath, $"{job.Id}.csv");
             var csvHeader = "Timestamp,OpenPrice,HighPrice,LowPrice,ClosePrice,Volume";
             var csvLines = historicalData.Select(p =>
                 $"{p.Timestamp:O},{p.OpenPrice},{p.HighPrice},{p.LowPrice},{p.ClosePrice},{p.Volume}"
             );
-            await File.WriteAllLinesAsync(dataPathInContainer, new[] { csvHeader }.Concat(csvLines));
+            await File.WriteAllLinesAsync(dataPath, new[] { csvHeader }.Concat(csvLines));
 
-            // --- 2. Define Parameter Ranges based on Mode ---
+            // --- 2. Define Script Arguments (THE FIX IS HERE) ---
+            // This now includes all the arguments the new python script requires.
             var scriptArgs = new Dictionary<string, object>
             {
-                { "data_path", dataPathInContainer }
+                { "data_path", dataPath },
+                { "mode", job.Mode }, // <-- Required argument is now passed
+                { "model_path", "/app/models/lstm_optimizer.h5" },
+                { "epochs", job.Epochs },
+                { "lookback", job.LookBack }
             };
 
-            if (job.Mode.Equals("train", StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogInformation("Configuring WIDE parameter search for 'Train' mode.");
-                scriptArgs.Add("ma_period_range", new[] { 20, 201, 20 });
-                scriptArgs.Add("rsi_period_range", new[] { 7, 31, 3 });
-                scriptArgs.Add("rsi_oversold_range", new[] { 15, 41, 5 });
-                scriptArgs.Add("rsi_overbought_range", new[] { 60, 86, 5 });
-                scriptArgs.Add("std_dev_multiplier_range", new[] { 1.5, 3.6, 0.5 });
-                scriptArgs.Add("atr_period_range", new[] { 7, 29, 3 });
-                scriptArgs.Add("atr_multiplier_range", new[] { 1.0, 5.1, 0.5 });
-            }
-            else if (job.Mode.Equals("finetune", StringComparison.OrdinalIgnoreCase))
-            {
-                _logger.LogInformation("Configuring FOCUSED parameter search for 'Finetune' mode.");
-                scriptArgs.Add("ma_period_range", new[] { 40, 81, 10 });
-                scriptArgs.Add("rsi_period_range", new[] { 10, 25, 2 });
-                scriptArgs.Add("rsi_oversold_range", new[] { 25, 36, 2 });
-                scriptArgs.Add("rsi_overbought_range", new[] { 65, 76, 2 });
-                scriptArgs.Add("std_dev_multiplier_range", new[] { 1.8, 2.9, 0.2 });
-                scriptArgs.Add("atr_period_range", new[] { 10, 22, 2 });
-                scriptArgs.Add("atr_multiplier_range", new[] { 2.0, 4.1, 0.25 });
-            }
-            else
-            {
-                return new OptimizationResult { JobId = job.Id, Status = $"Failed: Unknown mode '{job.Mode}'" };
-            }
+            // Add the parameter ranges, these could come from the job or config in the future
+            scriptArgs.Add("ma_period_range", new[] { 20, 201, 20 });
+            scriptArgs.Add("rsi_period_range", new[] { 7, 31, 3 });
+            scriptArgs.Add("rsi_oversold_range", new[] { 15, 41, 5 });
+            scriptArgs.Add("rsi_overbought_range", new[] { 60, 86, 5 });
+            scriptArgs.Add("std_dev_multiplier_range", new[] { 1.5, 3.6, 0.5 });
+            scriptArgs.Add("atr_period_range", new[] { 7, 29, 3 });
+            scriptArgs.Add("atr_multiplier_range", new[] { 1.0, 5.1, 0.5 });
 
             // --- 3. Execute the GPU Optimizer ---
             _logger.LogInformation("Invoking GPU optimizer script 'optimizer.py'...");
@@ -107,14 +106,14 @@ namespace Temperance.Ludus.Services.Implementations
                 Symbol = job.Symbol,
                 Interval = job.Interval,
                 OptimizedParameters = pythonResult.OptimizedParameters,
-                PerformanceMetrics = pythonResult.Performance,
+                PerformanceMetrics = pythonResult.BruteForcePerformance, // Using brute-force performance for now
                 Status = "Completed"
             };
 
             await _resultRepository.SaveOptimizationResultAsync(result);
 
-            if (File.Exists(dataPathInContainer))
-                File.Delete(dataPathInContainer);
+            if (File.Exists(dataPath))
+                File.Delete(dataPath);
 
             return result;
         }
