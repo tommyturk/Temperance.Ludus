@@ -1,10 +1,16 @@
-numpy==1.23.5
-pandas==2.2.2
-cython==3.0.10
-numba==0.56.4
-scikit-learn==1.5.0
+# Core ML and data processing
 tensorflow==2.16.1
+numpy==1.24.3
+pandas==2.2.2
+scikit-learn==1.5.0
+
+# GPU libraries (with fallbacks)
 cupy-cuda12x
-vectorbt
-TA-Lib
+cudf-cu12
+
+# Optimization and utilities
 optuna==3.6.1
+pynvml
+
+# System monitoring
+psutil
