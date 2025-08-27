@@ -19,7 +19,10 @@ builder.Services.Configure<PythonRunnerSettings>(builder.Configuration.GetSectio
 
 builder.Services.AddSingleton<IMessageBusClient, RabbitMqClient>();
 
+builder.Services.AddHttpClient<IConductorClient, ConductorClient>();
+
 builder.Services.AddHostedService<OptimizationWorker>();
+
 
 IHost host = builder.Build();
 host.Run();

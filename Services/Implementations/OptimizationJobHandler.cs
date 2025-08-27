@@ -13,17 +13,20 @@ namespace Temperance.Ludus.Services.Implementations
         private readonly IPythonScriptRunner _pythonScriptRunner;
         private readonly IHistoricalDataService _historicalDataService;
         private readonly IResultRepository _resultRepository;
+        private readonly IConductorClient _conductorClient;
 
         public OptimizationJobHandler(
             ILogger<OptimizationJobHandler> logger,
             IPythonScriptRunner pythonScriptRunner,
             IHistoricalDataService historicalDataService,
-            IResultRepository resultRepository)
+            IResultRepository resultRepository,
+            IConductorClient conductorClient)
         {
             _logger = logger;
             _pythonScriptRunner = pythonScriptRunner;
             _historicalDataService = historicalDataService;
             _resultRepository = resultRepository;
+            _conductorClient = conductorClient;
         }
 
         public async Task<PythonScriptResult?> ProcessJobAsync(OptimizationJob job)
@@ -92,7 +95,9 @@ namespace Temperance.Ludus.Services.Implementations
                         OptimizedParameters = result.BestParameters
                     };
 
-                    await _resultRepository.SaveOptimizationResultAsync(optimizationResult);
+                    var optimizationRecordId = await _resultRepository.SaveOptimizationResultAsync(optimizationResult);
+                    optimizationResult.Id = optimizationRecordId;
+                    await _conductorClient.TriggerBacktestAsync(optimizationResult);
                 }
                 else
                 {

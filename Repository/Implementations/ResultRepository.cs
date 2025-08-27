@@ -16,29 +16,26 @@ namespace Temperance.Ludus.Repository.Implementations
             _logger = logger;
         }
 
-        public async Task SaveOptimizationResultAsync(OptimizationResult result)
+        public async Task<int> SaveOptimizationResultAsync(OptimizationResult result)
         {
             if (result.OptimizedParameters == null)
             {
                 _logger.LogWarning("Cannot save result with null parameters for JobId {JobId}", result.JobId);
-                return;
+                return 0;
             }
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
             const string sql = @"
-                MERGE Ludus.StrategyOptimizedParameters AS target
-                USING (SELECT @StrategyName AS StrategyName, @Symbol AS Symbol, @Interval AS Interval) AS source
-                ON target.StrategyName = source.StrategyName AND target.Symbol = source.Symbol AND target.Interval = source.Interval
-                WHEN MATCHED THEN
-                    UPDATE SET OptimizedParametersJson = @OptimizedParametersJson, CreatedAt = GETUTCDATE()
-                WHEN NOT MATCHED THEN
-                    INSERT (StrategyName, Symbol, Interval, OptimizedParametersJson)
-                    VALUES (@StrategyName, @Symbol, @Interval, @OptimizedParametersJson);";
+                INSERT INTO Ludus.StrategyOptimizedParameters 
+                    (JobId, StrategyName, Symbol, Interval, OptimizedParametersJson, PerformanceScore)
+                VALUES 
+                    (@JobId, @StrategyName, @Symbol, @Interval, @OptimizedParametersJson, @PerformanceScore);";
+
 
             try
             {
                 await using var connection = new SqlConnection(connectionString);
-                await connection.ExecuteAsync(sql, new
+                var newId = await connection.ExecuteScalarAsync<int>(sql, new
                 {
                     result.StrategyName,
                     result.Symbol,
@@ -47,6 +44,8 @@ namespace Temperance.Ludus.Repository.Implementations
                 });
                 _logger.LogInformation("Successfully saved/updated parameters for {Strategy} on {Symbol}/{Interval}",
                     result.StrategyName, result.Symbol, result.Interval);
+
+                return newId;
             }
             catch (Exception ex)
             {

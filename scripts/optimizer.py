@@ -16,19 +16,21 @@ def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
 def setup_gpu():
-    """Setup GPU with fallback to CPU"""
+    """Sets memory growth for all available GPUs to avoid allocation errors."""
     try:
         import tensorflow as tf
         physical_devices = tf.config.list_physical_devices('GPU')
-        if len(physical_devices) > 0:
-            tf.config.experimental.set_memory_growth(physical_devices[0], True)
-            eprint(f"GPU found and configured: {physical_devices[0]}")
+        if physical_devices:
+            for gpu in physical_devices:
+                tf.config.experimental.set_memory_growth(gpu, True)
+            eprint(f"Successfully configured memory growth for {len(physical_devices)} GPU(s).")
             return True, tf
         else:
-            eprint("No GPU found, using CPU")
+            eprint("No GPU found, using CPU.")
             return False, tf
     except Exception as e:
         eprint(f"GPU setup failed: {e}. Falling back to CPU.")
+        # Ensure tf is still returned on failure for consistent function output
         import tensorflow as tf
         return False, tf
 
@@ -95,6 +97,20 @@ def calculate_rsi_cudf(prices, period: int):
     rs = avg_gain / avg_loss
     rsi = 100.0 - (100.0 / (1.0 + rs))
     return rsi.fillna(50)
+
+def calculate_atr(df: pd.DataFrame, period: int) -> pd.Series:
+    """Calculate Average True Range (ATR)"""
+    high = df['HighPrice']
+    low = df['LowPrice']
+    close = df['ClosePrice']
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        (high - low),
+        (high - prev_close).abs(),
+        (low - prev_close).abs()
+    ], axis=1).max(axis=1)
+    atr = tr.rolling(window=period, min_periods=period).mean()
+    return atr
 
 def vectorized_backtest(prices, entries, exits, use_cupy: bool) -> float:
     """Vectorized backtesting with GPU/CPU fallback"""
@@ -342,21 +358,21 @@ def generate_training_labels(prices_df, param_grid: Dict, model_lookback_window:
                     mean = window_prices.rolling(window=p['ma_period'], min_periods=p['ma_period']).mean()
                     std = window_prices.rolling(window=p['ma_period'], min_periods=p['ma_period']).std()
                     rsi = calculate_rsi(window_prices, p['rsi_period'])
-                    
-                    # Skip if indicators have too many NaN values
-                    valid_data_start = max(p['ma_period'], p['rsi_period'])
+
+                    # ATR calculation (use the same window as window_prices)
+                    atr = calculate_atr(prices_df.iloc[start_idx:end_idx], int(p['atr_period']))
+
+                    valid_data_start = max(p['ma_period'], p['rsi_period'], int(p['atr_period']))
                     if valid_data_start >= len(window_prices) - 10:
                         continue
-                    
-                    # Generate signals (use boolean indexing more carefully)
-                    lower_band = mean - std * p['std_dev_multiplier']
-                    
-                    # Create boolean masks
+
+                    # ATR-based lower band
+                    lower_band = mean - std * p['std_dev_multiplier'] - atr * p['atr_multiplier']
+
                     price_below_lower = window_prices < lower_band
                     rsi_oversold = rsi < p['rsi_oversold']
                     price_above_mean = window_prices > mean
-                    
-                    # Combine conditions and get valid indices
+
                     entry_condition = price_below_lower & rsi_oversold
                     exit_condition = price_above_mean
                     
@@ -455,11 +471,13 @@ def main(args):
         
         # Parameter grid - make it more reasonable
         param_grid = {
-            'ma_period': list(range(10, 25, 2)),  # Smaller range, more values
-            'std_dev_multiplier': [round(x, 1) for x in np.arange(1.5, 2.5, 0.1)],  # More granular
-            'rsi_period': list(range(10, 21, 2)),  # Smaller range
-            'rsi_oversold': list(range(20, 35, 3)),  # More reasonable range
-            'rsi_overbought': list(range(65, 81, 3))  # More reasonable range
+            'ma_period': list(range(10, 25, 2)),
+            'std_dev_multiplier': [round(x, 1) for x in np.arange(1.5, 2.5, 0.1)],
+            'rsi_period': list(range(10, 21, 2)),
+            'rsi_oversold': list(range(20, 35, 3)),
+            'rsi_overbought': list(range(65, 81, 3)),
+            'atr_period': list(range(10, 21, 2)),  # NEW
+            'atr_multiplier': [round(x, 1) for x in np.arange(1.5, 3.1, 0.2)]  # NEW
         }
         
         # Calculate dimensions
@@ -604,14 +622,12 @@ def main(args):
         for i, key in enumerate(param_keys):
             param_range = param_grid[key]
             raw_value = predicted_params_raw[i]
-            
-            if key in ['ma_period', 'rsi_period', 'rsi_oversold', 'rsi_overbought']:
-                # Integer parameters
+
+            if key in ['ma_period', 'rsi_period', 'rsi_oversold', 'rsi_overbought', 'atr_period']:
                 clipped_value = int(np.round(np.clip(raw_value, min(param_range), max(param_range))))
             else:
-                # Float parameters
                 clipped_value = float(np.round(np.clip(raw_value, min(param_range), max(param_range)), 2))
-            
+
             # Map to expected output format
             if key == 'ma_period':
                 final_params["MovingAveragePeriod"] = clipped_value
@@ -623,13 +639,17 @@ def main(args):
                 final_params["RSIOversold"] = clipped_value
             elif key == 'rsi_overbought':
                 final_params["RSIOverbought"] = clipped_value
+            elif key == 'atr_period':
+                final_params["AtrPeriod"] = clipped_value
+            elif key == 'atr_multiplier':
+                final_params["AtrMultiplier"] = clipped_value
         
         # Save results
         result = {
-            "status": "success",
-            "best_parameters": final_params,
-            "performance": None,
-            "message": f"Successfully optimized parameters using {args.mode} mode"
+            "Status": "success",
+            "BestParameters": final_params,
+            "Performance": None,
+            "Message": f"Successfully optimized parameters using {args.mode} mode"
         }
         
         with open(args.output_json_path, 'w') as f:
@@ -645,10 +665,10 @@ def main(args):
         
         # Save error result
         error_result = {
-            "status": "error",
-            "message": str(e),
-            "best_parameters": None,
-            "performance": None
+            "Status": "error",
+            "Message": str(e),
+            "BestParameters": None,
+            "Performance": None
         }
         
         try:
