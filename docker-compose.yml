@@ -28,6 +28,8 @@ services:
       - temperance_network
     environment:
       - DOTNET_ENVIRONMENT=Production
+      - ConductorApi__BaseUrl=http://conductor-api:8002 
+
       - ConnectionStrings__HistoricalDatabase=Server=host.docker.internal,1433;Database=Historical;User ID=developer;Password=K3n5alr1532025!!;Encrypt=False;TrustServerCertificate=True;
       - ConnectionStrings__DefaultConnection=Server=host.docker.internal,1433;Database=TradingBotDb;User ID=developer;Password=K3n5alr1532025!!;Encrypt=False;TrustServerCertificate=True;
       - RabbitMQ__HostName=rabbitmq
