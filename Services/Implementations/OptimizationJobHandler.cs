@@ -40,6 +40,8 @@ namespace Temperance.Ludus.Services.Implementations
             Directory.CreateDirectory(modelDir);
             var modelPath = Path.Combine(modelDir, $"{job.StrategyName}_{job.Symbol}_{job.Interval}.keras".Replace("/", "_"));
 
+            var jsonJob = JsonSerializer.Serialize(job, new JsonSerializerOptions { WriteIndented = true });
+            _logger.LogInformation($"Job payload: {jsonJob}");
             try
             {
                 var prices = await _historicalDataService.GetHistoricalPricesAsync(job.Symbol, job.Interval, job.StartDate, job.EndDate);
@@ -92,7 +94,9 @@ namespace Temperance.Ludus.Services.Implementations
                         StrategyName = job.StrategyName,
                         Symbol = job.Symbol,
                         Interval = job.Interval,
-                        OptimizedParameters = result.BestParameters
+                        OptimizedParameters = result.BestParameters,
+                        StartDate = job.StartDate,
+                        EndDate = job.EndDate
                     };
 
                     var optimizationRecordId = await _resultRepository.SaveOptimizationResultAsync(optimizationResult);

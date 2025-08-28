@@ -8,4 +8,6 @@ public class OptimizationResult
     public string Symbol { get; set; } = string.Empty;
     public string Interval { get; set; } = string.Empty;
     public BestParameters? OptimizedParameters { get; set; }
+    public DateTime StartDate { get; set; }
+    public DateTime EndDate { get; set; }
 }

@@ -300,74 +300,73 @@ def get_features_gpu(prices_gdf):
     
     return features.fillna(0).astype(np.float32)
 
-def generate_training_labels(prices_df, param_grid: Dict, model_lookback_window: int, 
+def generate_training_labels(prices_df, param_grid: Dict, model_lookback_window: int,
                            use_cudf: bool, use_cupy: bool, cp_module):
     """Generate training labels using brute force optimization"""
     try:
         features_df = get_features(prices_df, use_cudf)
         close_prices = prices_df['ClosePrice']
-        
+
         X_train, y_train = [], []
         num_steps = len(prices_df) - LABEL_GENERATION_PERIOD - model_lookback_window
-        
+
         if num_steps <= 0:
             eprint(f"Insufficient data: need at least {LABEL_GENERATION_PERIOD + model_lookback_window} rows, got {len(prices_df)}")
             return np.array([]), np.array([])
-        
+
         param_combinations = list(itertools.product(*param_grid.values()))
         eprint(f"Starting label generation for {num_steps} steps with {len(param_combinations)} parameter combinations")
-        
+
         successful_samples = 0
         failed_attempts = 0
-        
+
         for i in range(0, num_steps, max(1, num_steps // 100)):  # Sample every N steps to reduce computation
             if i % 10 == 0:
                 eprint(f"Label generation progress: {i}/{num_steps} (successful: {successful_samples}, failed: {failed_attempts})")
-            
+
             start_idx = i + model_lookback_window
             end_idx = start_idx + LABEL_GENERATION_PERIOD
-            
+
             if end_idx > len(prices_df):
                 break
-                
+
             window_prices = close_prices.iloc[start_idx:end_idx].copy()
-            
+
             if len(window_prices) < LABEL_GENERATION_PERIOD // 2:
                 continue
-            
+
             # Reset index to make it work with integer indices
             window_prices.reset_index(drop=True, inplace=True)
-            
+
             best_perf = -float('inf')
             best_p_values = None
             valid_backtests = 0
-            
+
             # Sample parameter combinations to reduce computation
             sampled_combinations = param_combinations[::max(1, len(param_combinations) // 50)]
-            
+
             for params in sampled_combinations:
                 try:
                     p = dict(zip(param_grid.keys(), params))
-                    
+
                     # Ensure minimum periods for indicators
                     min_periods = max(p['ma_period'], p['rsi_period']) + 5
                     if len(window_prices) < min_periods:
                         continue
-                    
+
                     # Calculate indicators with proper minimum periods
                     mean = window_prices.rolling(window=p['ma_period'], min_periods=p['ma_period']).mean()
                     std = window_prices.rolling(window=p['ma_period'], min_periods=p['ma_period']).std()
                     rsi = calculate_rsi(window_prices, p['rsi_period'])
-
-                    # ATR calculation (use the same window as window_prices)
                     atr = calculate_atr(prices_df.iloc[start_idx:end_idx], int(p['atr_period']))
+
 
                     valid_data_start = max(p['ma_period'], p['rsi_period'], int(p['atr_period']))
                     if valid_data_start >= len(window_prices) - 10:
                         continue
-
-                    # ATR-based lower band
+                    
                     lower_band = mean - std * p['std_dev_multiplier'] - atr * p['atr_multiplier']
+
 
                     price_below_lower = window_prices < lower_band
                     rsi_oversold = rsi < p['rsi_oversold']
@@ -375,54 +374,38 @@ def generate_training_labels(prices_df, param_grid: Dict, model_lookback_window:
 
                     entry_condition = price_below_lower & rsi_oversold
                     exit_condition = price_above_mean
-                    
+
                     # Get actual indices where conditions are True
                     entry_indices = np.where(entry_condition.fillna(False))[0]
                     exit_indices = np.where(exit_condition.fillna(False))[0]
-                    
+
                     # Filter out indices before valid data starts
                     entry_indices = entry_indices[entry_indices >= valid_data_start]
                     exit_indices = exit_indices[exit_indices >= valid_data_start]
-                    
+
                     if len(entry_indices) >= 2 and len(exit_indices) >= 2:
                         try:
                             perf = vectorized_backtest(window_prices, entry_indices, exit_indices, use_cupy)
                             valid_backtests += 1
-                            
-                            # Accept any positive performance or performance > -0.2 (20% loss)
-                            if not np.isnan(perf) and not np.isinf(perf) and perf > -0.2 and perf > best_perf:
+
+                            if not np.isnan(perf) and not np.isinf(perf) and perf > best_perf:
                                 best_perf = perf
                                 best_p_values = list(p.values())
                         except Exception as bt_error:
-                            # eprint(f"Backtest error: {bt_error}")
                             continue
-                            
+
                 except Exception as param_error:
-                    # eprint(f"Parameter error: {param_error}")
                     continue
             
-            # Even if we don't find a profitable strategy, use the best one we found
-            # This prevents the "0 training samples" issue
-            if best_p_values is not None or valid_backtests > 0:
+            if best_p_values is not None:
                 try:
                     feature_window = features_df.iloc[i:i + model_lookback_window]
                     if use_cudf and hasattr(feature_window, 'to_numpy'):
                         feature_array = feature_window.to_numpy()
                     else:
                         feature_array = feature_window.values
-                    
+
                     if feature_array.size > 0 and not np.any(np.isnan(feature_array)):
-                        if best_p_values is None:
-                            # Use default parameters if none found
-                            param_keys = list(param_grid.keys())
-                            best_p_values = [
-                                np.median(param_grid[param_keys[0]]),  # ma_period
-                                np.median(param_grid[param_keys[1]]),  # std_dev_multiplier  
-                                np.median(param_grid[param_keys[2]]),  # rsi_period
-                                np.median(param_grid[param_keys[3]]),  # rsi_oversold
-                                np.median(param_grid[param_keys[4]])   # rsi_overbought
-                            ]
-                        
                         X_train.append(feature_array.flatten())
                         y_train.append(best_p_values)
                         successful_samples += 1
@@ -434,10 +417,10 @@ def generate_training_labels(prices_df, param_grid: Dict, model_lookback_window:
                     continue
             else:
                 failed_attempts += 1
-        
+
         eprint(f"Generated {len(X_train)} training samples (successful: {successful_samples}, failed: {failed_attempts})")
         return np.array(X_train), np.array(y_train)
-        
+
     except Exception as e:
         eprint(f"Error in generate_training_labels: {e}")
         import traceback
@@ -499,12 +482,16 @@ def main(args):
                 # Create minimal training data with default parameters
                 sample_features = get_features(prices_df.tail(args.lookback + 50), use_cudf)
                 if len(sample_features) >= args.lookback:
+                    # **FIX: Ensure default_params has all 7 values**
+                    param_keys = list(param_grid.keys())
                     default_params = [
                         np.median(param_grid['ma_period']),
                         np.median(param_grid['std_dev_multiplier']),
                         np.median(param_grid['rsi_period']),
                         np.median(param_grid['rsi_oversold']),
-                        np.median(param_grid['rsi_overbought'])
+                        np.median(param_grid['rsi_overbought']),
+                        np.median(param_grid['atr_period']),      # Added
+                        np.median(param_grid['atr_multiplier'])   # Added
                     ]
                     
                     # Create a few samples with slight variations
@@ -519,13 +506,15 @@ def main(args):
                             feature_array = window.values
                             
                         X_synthetic.append(feature_array.flatten())
-                        # Add small random variations to parameters
+                        # **FIX: Ensure varied_params has 7 values with random variations**
                         varied_params = [
                             default_params[0] + np.random.randint(-2, 3),
                             default_params[1] + np.random.uniform(-0.1, 0.1),
                             default_params[2] + np.random.randint(-2, 3),
                             default_params[3] + np.random.randint(-2, 3),
-                            default_params[4] + np.random.randint(-2, 3)
+                            default_params[4] + np.random.randint(-2, 3),
+                            default_params[5] + np.random.randint(-2, 3),      # Added variation for atr_period
+                            default_params[6] + np.random.uniform(-0.2, 0.2)   # Added variation for atr_multiplier
                         ]
                         y_synthetic.append(varied_params)
                     

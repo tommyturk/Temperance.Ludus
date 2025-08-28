@@ -25,12 +25,13 @@ namespace Temperance.Ludus.Repository.Implementations
             }
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
+            // Corrected SQL: Removed the JobId column from the INSERT statement
             const string sql = @"
                 INSERT INTO Ludus.StrategyOptimizedParameters 
-                    (JobId, StrategyName, Symbol, Interval, OptimizedParametersJson, PerformanceScore)
+                    (StrategyName, Symbol, Interval, OptimizedParametersJson)
                 VALUES 
-                    (@JobId, @StrategyName, @Symbol, @Interval, @OptimizedParametersJson, @PerformanceScore);";
-
+                    (@StrategyName, @Symbol, @Interval, @OptimizedParametersJson);
+                SELECT CAST(SCOPE_IDENTITY() as int)";
 
             try
             {
@@ -42,8 +43,8 @@ namespace Temperance.Ludus.Repository.Implementations
                     result.Interval,
                     OptimizedParametersJson = JsonSerializer.Serialize(result.OptimizedParameters)
                 });
-                _logger.LogInformation("Successfully saved/updated parameters for {Strategy} on {Symbol}/{Interval}",
-                    result.StrategyName, result.Symbol, result.Interval);
+                _logger.LogInformation("Successfully saved parameters for JobId {JobId} ({Strategy} on {Symbol}/{Interval}) with new record ID {Id}",
+                    result.JobId, result.StrategyName, result.Symbol, result.Interval, newId);
 
                 return newId;
             }

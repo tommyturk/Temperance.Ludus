@@ -41,7 +41,6 @@ services:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # This is the modern and correct way to request GPU resources
     deploy:
       resources:
         reservations:

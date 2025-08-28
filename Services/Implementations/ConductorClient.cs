@@ -22,8 +22,10 @@ namespace Temperance.Ludus.Services.Implementations
 
             var payload = new
             {
-                result.Id,
+                OptimizationId = result.Id,
                 OptimizationJobId = result.JobId,
+                StartDate = result.EndDate.AddDays(1),
+                EndDate = result.EndDate.AddDays(7),
             };
 
             try

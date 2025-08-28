@@ -45,12 +45,11 @@ namespace Temperance.Ludus.Services.Implementations
                 }
                 catch (JsonException jsonEx)
                 {
-                    _logger.LogError(jsonEx, "JSON Deserialization error for message: {message}", message);
+                    _logger.LogError(jsonEx, "JSON Deserialization error for message: {message}. Message will not be re-queued.", message);
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "An unexpected error occurred while processing message. It will be re-queued.");
-                    throw;
+                    _logger.LogError(ex, "An unexpected error occurred while processing a message. The message has been processed and will not be re-queued.");
                 }
             });
 
