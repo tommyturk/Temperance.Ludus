@@ -24,6 +24,7 @@ namespace Temperance.Ludus.Services.Implementations
             {
                 OptimizationId = result.Id,
                 OptimizationJobId = result.JobId,
+                SessionId = result.SessionId,
                 StartDate = result.EndDate.AddDays(1),
                 EndDate = result.EndDate.AddDays(7),
             };

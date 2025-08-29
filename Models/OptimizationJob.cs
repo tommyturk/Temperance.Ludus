@@ -5,6 +5,7 @@ namespace Temperance.Ludus.Models
     public class OptimizationJob
     {
         public Guid JobId { get; set; }
+        public Guid? SessionId { get; set; }
         public string StrategyName { get; set; } = string.Empty;
         public string Symbol { get; set; } = string.Empty;
         public string Interval { get; set; } = string.Empty;

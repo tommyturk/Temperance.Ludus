@@ -91,6 +91,7 @@ namespace Temperance.Ludus.Services.Implementations
                     var optimizationResult = new OptimizationResult
                     {
                         JobId = job.JobId,
+                        SessionId = job.SessionId,
                         StrategyName = job.StrategyName,
                         Symbol = job.Symbol,
                         Interval = job.Interval,
