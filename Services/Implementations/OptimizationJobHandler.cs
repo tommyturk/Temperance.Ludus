@@ -102,6 +102,7 @@ namespace Temperance.Ludus.Services.Implementations
 
                     var optimizationRecordId = await _resultRepository.SaveOptimizationResultAsync(optimizationResult);
                     optimizationResult.Id = optimizationRecordId;
+
                     await _conductorClient.TriggerBacktestAsync(optimizationResult);
                 }
                 else
