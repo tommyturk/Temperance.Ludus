@@ -38,7 +38,6 @@ namespace Temperance.Ludus.Services.Implementations
             catch (HttpRequestException ex)
             {
                 _logger.LogError(ex, "Failed to trigger backtest via Conductor for JobId {JobId}", result.JobId);
-                // Depending on requirements, you might want to retry or handle this failure
                 throw;
             }
         }
