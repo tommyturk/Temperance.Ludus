@@ -28,9 +28,9 @@ namespace Temperance.Ludus.Repository.Implementations
             // Corrected SQL: Removed the JobId column from the INSERT statement
             const string sql = @"
                 INSERT INTO Ludus.StrategyOptimizedParameters 
-                    (StrategyName, Symbol, Interval, OptimizedParametersJson)
+                    (StrategyName, Symbol, Interval, OptimizedParametersJson, StartDate, EndDate)
                 VALUES 
-                    (@StrategyName, @Symbol, @Interval, @OptimizedParametersJson);
+                    (@StrategyName, @Symbol, @Interval, @OptimizedParametersJson. @StartDate, @EndDate);
                 SELECT CAST(SCOPE_IDENTITY() as int)";
 
             try
