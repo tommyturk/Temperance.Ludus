@@ -1,6 +1,8 @@
-﻿using System.Globalization;
+﻿using Microsoft.Extensions.Options;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using Temperance.Ludus.Confguration;
 using Temperance.Ludus.Models;
 using Temperance.Ludus.Repository.Interfaces;
 using Temperance.Ludus.Services.Interfaces;
@@ -14,19 +16,22 @@ namespace Temperance.Ludus.Services.Implementations
         private readonly IHistoricalDataService _historicalDataService;
         private readonly IResultRepository _resultRepository;
         private readonly IConductorClient _conductorClient;
+        private readonly PythonRunnerSettings _pythonRunnerSettings;
 
         public OptimizationJobHandler(
             ILogger<OptimizationJobHandler> logger,
             IPythonScriptRunner pythonScriptRunner,
             IHistoricalDataService historicalDataService,
             IResultRepository resultRepository,
-            IConductorClient conductorClient)
+            IConductorClient conductorClient,
+            IOptions<PythonRunnerSettings> pythonRunnerSettings)
         {
             _logger = logger;
-            _pythonScriptRunner = pythonScriptRunner;
+            _pythonRunnerSettings = pythonRunnerSettings.Value;
             _historicalDataService = historicalDataService;
             _resultRepository = resultRepository;
             _conductorClient = conductorClient;
+            _pythonScriptRunner = pythonScriptRunner;
         }
 
         public async Task<PythonScriptResult?> ProcessJobAsync(OptimizationJob job)
@@ -36,7 +41,7 @@ namespace Temperance.Ludus.Services.Implementations
 
             var inputCsvPath = Path.Combine(Path.GetTempPath(), $"{job.JobId}_input.csv");
             var outputJsonPath = Path.Combine(Path.GetTempPath(), $"{job.JobId}_output.json");
-            var modelDir = Path.Combine(Path.GetTempPath(), "ludus_models");
+            var modelDir = _pythonRunnerSettings.SharedDataPath;
             Directory.CreateDirectory(modelDir);
             var modelPath = Path.Combine(modelDir, $"{job.StrategyName}_{job.Symbol}_{job.Interval}.keras".Replace("/", "_"));
 

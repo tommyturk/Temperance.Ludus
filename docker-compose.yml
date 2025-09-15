@@ -35,6 +35,7 @@ services:
       - RabbitMQ__HostName=rabbitmq
       - RabbitMQ__UserName=user
       - RabbitMQ__Password=password
+      - PythonSettings__SharedDataPath=/app/models 
     restart: unless-stopped
     depends_on:
       rabbitmq:
