@@ -17,6 +17,7 @@ namespace Temperance.Ludus.Services.Implementations
         private readonly IResultRepository _resultRepository;
         private readonly IConductorClient _conductorClient;
         private readonly PythonRunnerSettings _pythonRunnerSettings;
+        private readonly string _baseTempPath;
 
         public OptimizationJobHandler(
             ILogger<OptimizationJobHandler> logger,
@@ -24,7 +25,8 @@ namespace Temperance.Ludus.Services.Implementations
             IHistoricalDataService historicalDataService,
             IResultRepository resultRepository,
             IConductorClient conductorClient,
-            IOptions<PythonRunnerSettings> pythonRunnerSettings)
+            IOptions<PythonRunnerSettings> pythonRunnerSettings,
+            IOptions<FilePathsSettings> filePathSettings)
         {
             _logger = logger;
             _pythonRunnerSettings = pythonRunnerSettings.Value;
@@ -32,6 +34,7 @@ namespace Temperance.Ludus.Services.Implementations
             _resultRepository = resultRepository;
             _conductorClient = conductorClient;
             _pythonScriptRunner = pythonScriptRunner;
+            _baseTempPath = filePathSettings.Value.TempData;
         }
 
         public async Task<PythonScriptResult?> ProcessJobAsync(OptimizationJob job)
@@ -39,10 +42,15 @@ namespace Temperance.Ludus.Services.Implementations
             _logger.LogInformation("Processing optimization job {JobId} for {Symbol} [{Interval}]...",
                 job.JobId, job.Symbol, job.Interval);
 
-            var inputCsvPath = Path.Combine(Path.GetTempPath(), $"{job.JobId}_input.csv");
-            var outputJsonPath = Path.Combine(Path.GetTempPath(), $"{job.JobId}_output.json");
-            var modelDir = _pythonRunnerSettings.SharedDataPath;
+            var baseTempPath = _baseTempPath;
+            Directory.CreateDirectory(baseTempPath);
+
+            var inputCsvPath = Path.Combine(baseTempPath, $"{job.JobId}_input.csv");
+            var outputJsonPath = Path.Combine(baseTempPath, $"{job.JobId}_output.json");
+
+            var modelDir = Path.Combine(baseTempPath, "ludus_models");
             Directory.CreateDirectory(modelDir);
+
             var modelPath = Path.Combine(modelDir, $"{job.StrategyName}_{job.Symbol}_{job.Interval}.keras".Replace("/", "_"));
 
             var jsonJob = JsonSerializer.Serialize(job, new JsonSerializerOptions { WriteIndented = true });
@@ -72,11 +80,12 @@ namespace Temperance.Ludus.Services.Implementations
                 await File.WriteAllTextAsync(inputCsvPath, csvBuilder.ToString());
                 _logger.LogInformation("Wrote {Count} data points for job {JobId} to {InputPath}", prices.Count, job.JobId, inputCsvPath);
 
+                var modeAsString = job.Mode == 0 ? "train" : "fine-tune";
                 var scriptArgs = new Dictionary<string, string>
                 {
                     { "input_csv_path", inputCsvPath },
                     { "output_json_path", outputJsonPath },
-                    { "--mode", job.Mode },
+                    { "--mode", modeAsString },
                     { "--model-path", modelPath },
                     { "--epochs", job.Epochs.ToString() },
                     { "--lookback", job.LookBack.ToString() }

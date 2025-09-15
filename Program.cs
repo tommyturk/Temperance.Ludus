@@ -15,6 +15,7 @@ builder.Services.AddSingleton<IHistoricalDataService, HistoricalDataService>();
 builder.Services.AddSingleton<IOptimizationJobHandler, OptimizationJobHandler>();
 builder.Services.AddSingleton<IResultRepository, ResultRepository>();
 builder.Services.AddSingleton<IPythonScriptRunner, PythonScriptRunner>();
+builder.Services.Configure<FilePathsSettings>(builder.Configuration.GetSection("FilePaths"));
 builder.Services.Configure<PythonRunnerSettings>(builder.Configuration.GetSection("PythonRunnerSettings"));
 
 builder.Services.AddSingleton<IMessageBusClient, RabbitMqClient>();
