@@ -1,4 +1,5 @@
 ﻿using System.Net.Http.Json;
+using Temperance.Ludus.Models.Payloads;
 using Temperance.Ludus.Services.Interfaces;
 
 namespace Temperance.Ludus.Services.Implementations
@@ -16,30 +17,42 @@ namespace Temperance.Ludus.Services.Implementations
                 ?? "http://conductor:7200/"); 
         }
 
-        public async Task TriggerBacktestAsync(OptimizationResult result)
+        public async Task NotifyOptimizationCompleteAsync(Guid jobId, Guid sessionId)
         {
-            _logger.LogInformation("Notifying Conductor to start backtest for JobId {JobId}", result.JobId);
+            _logger.LogInformation("Notifying Conductor of job completion for JobId: {JobId}", jobId);
 
-            var payload = new
-            {
-                OptimizationId = result.Id,
-                OptimizationJobId = result.JobId,
-                SessionId = result.SessionId,
-                StartDate = result.EndDate.AddDays(1),
-                EndDate = result.EndDate.AddDays(7),
-            };
+            var payload = new OptimizationCompletePayload(jobId, sessionId);
 
-            try
+            var response = await _httpClient.PostAsJsonAsync("api/Orchestration/notify-complete", payload);
+
+            if (!response.IsSuccessStatusCode)
             {
-                var response = await _httpClient.PostAsJsonAsync("api/backtest/start-from-optimization", payload);
+                var errorContent = await response.Content.ReadAsStringAsync();
+                _logger.LogError("Failed to notify Conductor of job completion for JobId {JobId}. Status: {StatusCode}. Error: {Error}",
+                    jobId, response.StatusCode, errorContent);
                 response.EnsureSuccessStatusCode();
-                _logger.LogInformation("Successfully triggered backtest via Conductor for JobId {JobId}", result.JobId);
             }
-            catch (HttpRequestException ex)
+
+            _logger.LogInformation("Successfully notified Conductor of job completion for JobId: {JobId}", jobId);
+        }
+
+        public async Task NotifyOptimizationFailedAsync(Guid jobId, Guid sessionId, string errorMessage)
+        {
+            _logger.LogWarning("Notifying Conductor of job failure for JobId: {JobId}", jobId);
+
+            var payload = new OptimizationFailurePayload(jobId, sessionId, errorMessage);
+
+            var response = await _httpClient.PostAsJsonAsync("api/Orchestration/notify-failed", payload);
+
+            if (!response.IsSuccessStatusCode)
             {
-                _logger.LogError(ex, "Failed to trigger backtest via Conductor for JobId {JobId}", result.JobId);
-                throw;
+                var errorContent = await response.Content.ReadAsStringAsync();
+                _logger.LogError("Failed to notify Conductor of job failure for JobId {JobId}. Status: {StatusCode}. Error: {Error}",
+                    jobId, response.StatusCode, errorContent);
+                response.EnsureSuccessStatusCode();
             }
+
+            _logger.LogInformation("Successfully notified Conductor of job failure for JobId: {JobId}", jobId);
         }
     }
 }

@@ -8,6 +8,7 @@ namespace Temperance.Ludus.Services.Interfaces
 {
     public interface IConductorClient
     {
-        Task TriggerBacktestAsync(OptimizationResult result);
+        Task NotifyOptimizationCompleteAsync(Guid jobId, Guid sessionId);
+        Task NotifyOptimizationFailedAsync(Guid jobId, Guid sessionId, string errorMessage);
     }
 }

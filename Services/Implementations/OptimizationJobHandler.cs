@@ -61,6 +61,10 @@ namespace Temperance.Ludus.Services.Implementations
                 if (!prices.Any())
                 {
                     _logger.LogWarning("No historical data found for job {JobId} within the specified date range. Skipping.", job.JobId);
+                   
+                    await _conductorClient.NotifyOptimizationFailedAsync(job.JobId, job.SessionId.Value,
+                        $"No historical data found for job: Symbol: {job.Symbol} at Interval: {job.Interval}");
+
                     return new PythonScriptResult { Status = "Skipped", Message = "No historical data." };
                 }
 
@@ -117,12 +121,13 @@ namespace Temperance.Ludus.Services.Implementations
                     var optimizationRecordId = await _resultRepository.SaveOptimizationResultAsync(optimizationResult);
                     optimizationResult.Id = optimizationRecordId;
 
-                    await _conductorClient.TriggerBacktestAsync(optimizationResult);
+                    await _conductorClient.NotifyOptimizationCompleteAsync(optimizationResult.JobId, optimizationResult.SessionId.Value);
                 }
                 else
                 {
                     _logger.LogWarning("Optimization script for Job {JobId} did not succeed: {Message}",
                         job.JobId, result?.Message ?? "No message provided.");
+                    await _conductorClient.NotifyOptimizationFailedAsync(job.JobId, job.SessionId.Value, "Optimization script failed.");
                 }
                 return result;
             }
