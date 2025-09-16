@@ -25,12 +25,13 @@ namespace Temperance.Ludus.Repository.Implementations
             }
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
-            // Corrected SQL: Removed the JobId column from the INSERT statement
+
+            // *** CORRECTED SQL: Removed the period after @OptimizedParametersJson ***
             const string sql = @"
                 INSERT INTO Ludus.StrategyOptimizedParameters 
                     (StrategyName, Symbol, Interval, OptimizedParametersJson, StartDate, EndDate, JobId, SessionId)
                 VALUES 
-                    (@StrategyName, @Symbol, @Interval, @OptimizedParametersJson. @StartDate, @EndDate, @JobId, @SessionId);
+                    (@StrategyName, @Symbol, @Interval, @OptimizedParametersJson, @StartDate, @EndDate, @JobId, @SessionId);
                 SELECT CAST(SCOPE_IDENTITY() as int)";
 
             try
@@ -47,6 +48,7 @@ namespace Temperance.Ludus.Repository.Implementations
                     result.JobId,
                     result.SessionId
                 });
+
                 _logger.LogInformation("Successfully saved parameters for JobId {JobId} ({Strategy} on {Symbol}/{Interval}) with new record ID {Id}",
                     result.JobId, result.StrategyName, result.Symbol, result.Interval, newId);
 
@@ -54,7 +56,9 @@ namespace Temperance.Ludus.Repository.Implementations
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to save optimization result for JobId {JobId}", result.JobId);
+                // *** IMPROVED LOGGING: This will now show you the *actual* SQL error message ***
+                _logger.LogError(ex, "Failed to save optimization result for JobId {JobId}. Error: {ErrorMessage}",
+                    result.JobId, ex.Message);
                 throw;
             }
         }

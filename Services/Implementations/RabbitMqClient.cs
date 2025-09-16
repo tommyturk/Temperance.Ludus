@@ -1,5 +1,6 @@
 ﻿using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
+using System.Runtime.InteropServices;
 using System.Text;
 using Temperance.Ludus.Services.Interfaces;
 
@@ -45,12 +46,28 @@ namespace Temperance.Ludus.Services.Implementations
             }
         }
 
-        public void StartConsuming(string queueName, Func<string, Task> onMessageReceived)
+        public void StartConsuming(string queueName, Func<string, Task> onMessageReceived, ushort prefetchCount = 3)
         {
             try
             {
                 _logger.LogInformation("Declaring queue '{QueueName}'", queueName);
+                var deadLetterExchangeName = "optimization_jobs_dlx";
+                var deadLetterQueueName = "optimization_jobs_dlq";
+
+                _channel.ExchangeDeclare(deadLetterExchangeName, ExchangeType.Direct);
+                _channel.QueueDeclare(queue: deadLetterQueueName, durable: true, exclusive: false, autoDelete: false);
+                _channel.QueueBind(deadLetterQueueName, deadLetterExchangeName, routingKey: queueName);
+
+                var arguments = new Dictionary<string, object>()
+                {
+                    { "x-dead-letter-exchange", deadLetterExchangeName },
+                    { "x-dead-letter-routing-key", queueName }
+                };
+
                 _channel.QueueDeclare(queue: queueName, durable: true, exclusive: false, autoDelete: false, arguments: null);
+
+                _channel.BasicQos(prefetchSize: 0, prefetchCount: prefetchCount, global: false);
+                _logger.LogInformation("Consumer QoS set with prefetch count of {PrefetchCount}", prefetchCount);
 
                 var consumer = new EventingBasicConsumer(_channel);
                 consumer.Received += async (model, ea) =>
@@ -62,13 +79,15 @@ namespace Temperance.Ludus.Services.Implementations
                     try
                     {
                         await onMessageReceived(message);
+
                         _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
                         _logger.LogDebug("Message acknowledged successfully");
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Error processing message from queue '{QueueName}'. Re-queueing message.", queueName);
-                        _channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
+                        _logger.LogError(ex, "Error processing message from queue '{QueueName}'. Discarding message (requeue=false).", queueName);
+
+                        _channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: false);
                     }
                 };
 

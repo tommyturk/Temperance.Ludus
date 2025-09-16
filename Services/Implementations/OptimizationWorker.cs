@@ -20,7 +20,6 @@ namespace Temperance.Ludus.Services.Implementations
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _logger.LogInformation("OptimizationWorker waiting for application to start...");
-            await Task.Delay(5000, stoppingToken);
 
             _messageBusClient.StartConsuming("optimization_jobs", async message =>
             {
