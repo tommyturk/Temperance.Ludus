@@ -42,6 +42,8 @@ namespace Temperance.Ludus.Services.Implementations
             _logger.LogInformation("Processing optimization job {JobId} for {Symbol} [{Interval}]...",
                 job.JobId, job.Symbol, job.Interval);
 
+            const int minimumDataPoints = 150; 
+
             var baseTempPath = _baseTempPath;
             Directory.CreateDirectory(baseTempPath);
 
@@ -58,7 +60,7 @@ namespace Temperance.Ludus.Services.Implementations
             try
             {
                 var prices = await _historicalDataService.GetHistoricalPricesAsync(job.Symbol, job.Interval, job.StartDate, job.EndDate);
-                if (!prices.Any())
+                if (!prices.Any() || prices.Count < minimumDataPoints)
                 {
                     _logger.LogWarning("No historical data found for job {JobId} within the specified date range. Skipping.", job.JobId);
                    
