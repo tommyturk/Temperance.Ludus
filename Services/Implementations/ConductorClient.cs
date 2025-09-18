@@ -21,7 +21,7 @@ namespace Temperance.Ludus.Services.Implementations
         {
             _logger.LogInformation("Notifying Conductor of job completion for JobId: {JobId}", jobId);
 
-            var payload = new OptimizationCompletePayload(jobId, sessionId);
+            var payload = new { JobId = jobId, SessionId = sessionId };
 
             var response = await _httpClient.PostAsJsonAsync("api/Orchestration/notify-complete", payload);
 
@@ -40,7 +40,12 @@ namespace Temperance.Ludus.Services.Implementations
         {
             _logger.LogWarning("Notifying Conductor of job failure for JobId: {JobId}", jobId);
 
-            var payload = new OptimizationFailurePayload(jobId, sessionId, errorMessage);
+            var payload = new OptimizationFailurePayload(
+                JobId: jobId,
+                SessionId: sessionId,
+                Status: "Failed",
+                ErrorMessage: errorMessage
+            );
 
             var response = await _httpClient.PostAsJsonAsync("api/Orchestration/notify-failed", payload);
 

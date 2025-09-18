@@ -118,7 +118,7 @@ namespace Temperance.Ludus.Services.Implementations
                         EndDate = job.EndDate
                     };
 
-                    var optimizationRecordId = await _resultRepository.SaveOptimizationResultAsync(optimizationResult);
+                    var optimizationRecordId = await _resultRepository.SaveOptimizationResultAsync(optimizationResult, job.ResultKey);
                     optimizationResult.Id = optimizationRecordId;
 
                     await _conductorClient.NotifyOptimizationCompleteAsync(optimizationResult.JobId, optimizationResult.SessionId.Value);

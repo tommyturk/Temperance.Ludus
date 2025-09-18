@@ -16,7 +16,7 @@ namespace Temperance.Ludus.Repository.Implementations
             _logger = logger;
         }
 
-        public async Task<int> SaveOptimizationResultAsync(OptimizationResult result)
+        public async Task<int> SaveOptimizationResultAsync(OptimizationResult result, string resultKey)
         {
             if (result.OptimizedParameters == null)
             {
@@ -29,9 +29,9 @@ namespace Temperance.Ludus.Repository.Implementations
             // *** CORRECTED SQL: Removed the period after @OptimizedParametersJson ***
             const string sql = @"
                 INSERT INTO Ludus.StrategyOptimizedParameters 
-                    (StrategyName, Symbol, Interval, OptimizedParametersJson, StartDate, EndDate, JobId, SessionId)
+                    (StrategyName, Symbol, Interval, OptimizedParametersJson, StartDate, EndDate, JobId, SessionId, ResultKey)
                 VALUES 
-                    (@StrategyName, @Symbol, @Interval, @OptimizedParametersJson, @StartDate, @EndDate, @JobId, @SessionId);
+                    (@StrategyName, @Symbol, @Interval, @OptimizedParametersJson, @StartDate, @EndDate, @JobId, @SessionId, @ResultKey);
                 SELECT CAST(SCOPE_IDENTITY() as int)";
 
             try
@@ -46,7 +46,8 @@ namespace Temperance.Ludus.Repository.Implementations
                     result.StartDate,
                     result.EndDate,
                     result.JobId,
-                    result.SessionId
+                    result.SessionId,
+                    ResultKey = resultKey
                 });
 
                 _logger.LogInformation("Successfully saved parameters for JobId {JobId} ({Strategy} on {Symbol}/{Interval}) with new record ID {Id}",

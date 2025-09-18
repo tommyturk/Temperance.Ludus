@@ -33,5 +33,8 @@ namespace Temperance.Ludus.Models
 
         [JsonPropertyName("lookBack")]
         public int LookBack { get; set; } = 60;
+
+        [JsonPropertyName("resultKey")]
+        public string ResultKey { get; set; }
     }
 }

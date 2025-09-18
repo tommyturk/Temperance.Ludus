@@ -46,7 +46,7 @@ namespace Temperance.Ludus.Services.Implementations
             }
         }
 
-        public void StartConsuming(string queueName, Func<string, Task> onMessageReceived, ushort prefetchCount = 3)
+        public void StartConsuming(string queueName, Func<string, Task> onMessageReceived, ushort prefetchCount = 5)
         {
             try
             {
