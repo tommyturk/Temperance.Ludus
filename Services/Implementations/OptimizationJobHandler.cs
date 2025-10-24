@@ -1,4 +1,5 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Options;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -6,6 +7,7 @@ using Temperance.Ludus.Confguration;
 using Temperance.Ludus.Models;
 using Temperance.Ludus.Repository.Interfaces;
 using Temperance.Ludus.Services.Interfaces;
+using Temperance.Ludus.Settings;
 
 namespace Temperance.Ludus.Services.Implementations
 {
@@ -17,6 +19,8 @@ namespace Temperance.Ludus.Services.Implementations
         private readonly IResultRepository _resultRepository;
         private readonly IConductorClient _conductorClient;
         private readonly PythonRunnerSettings _pythonRunnerSettings;
+        private readonly OptimizerSettings _optimizerSettings;
+
         private readonly string _baseTempPath;
 
         public OptimizationJobHandler(
@@ -26,7 +30,8 @@ namespace Temperance.Ludus.Services.Implementations
             IResultRepository resultRepository,
             IConductorClient conductorClient,
             IOptions<PythonRunnerSettings> pythonRunnerSettings,
-            IOptions<FilePathsSettings> filePathSettings)
+            IOptions<FilePathsSettings> filePathSettings,
+            IOptions<OptimizerSettings> optimizerSettings)
         {
             _logger = logger;
             _pythonRunnerSettings = pythonRunnerSettings.Value;
@@ -35,12 +40,24 @@ namespace Temperance.Ludus.Services.Implementations
             _conductorClient = conductorClient;
             _pythonScriptRunner = pythonScriptRunner;
             _baseTempPath = filePathSettings.Value.TempData;
+            _optimizerSettings = optimizerSettings.Value;
         }
 
         public async Task<PythonScriptResult?> ProcessJobAsync(OptimizationJob job)
         {
             _logger.LogInformation("Processing optimization job {JobId} for {Symbol} [{Interval}]...",
                 job.JobId, job.Symbol, job.Interval);
+
+            if (!_optimizerSettings.StrategyScripts.TryGetValue(job.StrategyName, out var scriptName))
+            {
+                _logger.LogError("No optimizer script configured for strategy '{StrategyName}'. Cannot process job {JobId}.",
+                    job.StrategyName, job.JobId);
+
+                await _conductorClient.NotifyOptimizationFailedAsync(job.JobId, job.SessionId.Value,
+                    $"No optimizer script configured for strategy: {job.StrategyName}");
+
+                return new PythonScriptResult { Status = "Failed", Message = $"No script mapping for {job.StrategyName}." };
+            }
 
             const int minimumDataPoints = 150; 
 
@@ -97,21 +114,15 @@ namespace Temperance.Ludus.Services.Implementations
                     { "--lookback", job.LookBack.ToString() }
                 };
 
-                await _pythonScriptRunner.RunScriptAsync("optimizer.py", scriptArgs);
+                await _pythonScriptRunner.RunScriptAsync(scriptName, scriptArgs);
 
                 var resultJson = await File.ReadAllTextAsync(outputJsonPath);
                 var result = JsonSerializer.Deserialize<PythonScriptResult>(resultJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
                 if (result is { Status: "success", BestParameters: not null })
                 {
-                    _logger.LogInformation(
-                       "Successfully found optimal parameters for Job {JobId}. Performance: {Perf}. Parameters: {Params}",
-                       job.JobId, result.Performance, JsonSerializer.Serialize(result.BestParameters));
-
                     var optimizationResult = new OptimizationResult
                     {
-                        JobId = job.JobId,
-                        SessionId = job.SessionId,
                         StrategyName = job.StrategyName,
                         Symbol = job.Symbol,
                         Interval = job.Interval,
@@ -120,10 +131,16 @@ namespace Temperance.Ludus.Services.Implementations
                         EndDate = job.EndDate
                     };
 
-                    var optimizationRecordId = await _resultRepository.SaveOptimizationResultAsync(optimizationResult, job.ResultKey);
-                    optimizationResult.Id = optimizationRecordId;
+                    try
+                    {
+                        await _resultRepository.SaveOptimizationResultAsync(optimizationResult);
+                    }
+                    catch (SqlException ex) when (ex.Number == 2601 || ex.Number == 2627) 
+                    {
+                        _logger.LogWarning("Optimization result for {Symbol} already exists. Discarding redundant result.", job.Symbol);
+                    }
 
-                    await _conductorClient.NotifyOptimizationCompleteAsync(optimizationResult.JobId, optimizationResult.SessionId.Value);
+                    await _conductorClient.NotifyOptimizationCompleteAsync(job.JobId, job.SessionId.Value);
                 }
                 else
                 {
@@ -136,6 +153,9 @@ namespace Temperance.Ludus.Services.Implementations
             catch (Exception ex)
             {
                 _logger.LogError(ex, "An unhandled exception occurred while processing job {JobId}.", job.JobId);
+
+                await _conductorClient.NotifyOptimizationFailedAsync(job.JobId, job.SessionId.Value, 
+                    $"An unhandled exception occurred in Ludus: {ex.Message}");
                 throw;
             }
             finally

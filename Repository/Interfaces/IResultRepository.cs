@@ -5,6 +5,6 @@ namespace Temperance.Ludus.Repository.Interfaces
 {
     public interface IResultRepository
     {
-        Task<int> SaveOptimizationResultAsync(OptimizationResult result, string resultKey);
+        Task<int> SaveOptimizationResultAsync(OptimizationResult result);
     }
 }

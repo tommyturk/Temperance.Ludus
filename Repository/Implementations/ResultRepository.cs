@@ -16,52 +16,42 @@ namespace Temperance.Ludus.Repository.Implementations
             _logger = logger;
         }
 
-        public async Task<int> SaveOptimizationResultAsync(OptimizationResult result, string resultKey)
+        public async Task<int> SaveOptimizationResultAsync(OptimizationResult result)
         {
             if (result.OptimizedParameters == null)
             {
-                _logger.LogWarning("Cannot save result with null parameters for JobId {JobId}", result.JobId);
+                _logger.LogWarning("Cannot save result with null parameters for {Strategy}/{Symbol}",
+                    result.StrategyName, result.Symbol);
                 return 0;
             }
 
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
 
-            // *** CORRECTED SQL: Removed the period after @OptimizedParametersJson ***
             const string sql = @"
                 INSERT INTO Ludus.StrategyOptimizedParameters 
-                    (StrategyName, Symbol, Interval, OptimizedParametersJson, StartDate, EndDate, JobId, SessionId, ResultKey)
+                    (StrategyName, Symbol, Interval, OptimizedParametersJson, StartDate, EndDate, CreatedAt)
                 VALUES 
-                    (@StrategyName, @Symbol, @Interval, @OptimizedParametersJson, @StartDate, @EndDate, @JobId, @SessionId, @ResultKey);
+                    (@StrategyName, @Symbol, @Interval, @OptimizedParametersJson, @StartDate, @EndDate, @CreatedAt);
                 SELECT CAST(SCOPE_IDENTITY() as int)";
 
-            try
-            {
-                await using var connection = new SqlConnection(connectionString);
-                var newId = await connection.ExecuteScalarAsync<int>(sql, new
-                {
-                    result.StrategyName,
-                    result.Symbol,
-                    result.Interval,
-                    OptimizedParametersJson = JsonSerializer.Serialize(result.OptimizedParameters),
-                    result.StartDate,
-                    result.EndDate,
-                    result.JobId,
-                    result.SessionId,
-                    ResultKey = resultKey
-                });
+            await using var connection = new SqlConnection(connectionString);
 
-                _logger.LogInformation("Successfully saved parameters for JobId {JobId} ({Strategy} on {Symbol}/{Interval}) with new record ID {Id}",
-                    result.JobId, result.StrategyName, result.Symbol, result.Interval, newId);
-
-                return newId;
-            }
-            catch (Exception ex)
+            var newId = await connection.ExecuteScalarAsync<int>(sql, new
             {
-                // *** IMPROVED LOGGING: This will now show you the *actual* SQL error message ***
-                _logger.LogError(ex, "Failed to save optimization result for JobId {JobId}. Error: {ErrorMessage}",
-                    result.JobId, ex.Message);
-                throw;
-            }
+                result.StrategyName,
+                result.Symbol,
+                result.Interval,
+                OptimizedParametersJson = JsonSerializer.Serialize(result.OptimizedParameters),
+                result.StartDate,
+                result.EndDate,
+                CreatedAt = DateTime.UtcNow 
+            });
+
+            _logger.LogInformation(
+                "Successfully saved new universal parameters for {Strategy} on {Symbol}/{Interval} with new record ID {Id}",
+                result.StrategyName, result.Symbol, result.Interval, newId);
+
+            return newId;
         }
     }
 }

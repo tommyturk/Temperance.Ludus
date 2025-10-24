@@ -29,7 +29,7 @@ namespace Temperance.Ludus.Models
         public int Mode { get; set; }
 
         [JsonPropertyName("epochs")]
-        public int Epochs { get; set; } = 50;
+        public int Epochs { get; set; } = 15;
 
         [JsonPropertyName("lookBack")]
         public int LookBack { get; set; } = 60;

@@ -46,7 +46,7 @@ namespace Temperance.Ludus.Services.Implementations
             }
         }
 
-        public void StartConsuming(string queueName, Func<string, Task> onMessageReceived, ushort prefetchCount = 5)
+        public void StartConsuming(string queueName, Func<string, Task> onMessageReceived, ushort prefetchCount = 16)
         {
             try
             {
@@ -66,7 +66,7 @@ namespace Temperance.Ludus.Services.Implementations
 
                 _channel.QueueDeclare(queue: queueName, durable: true, exclusive: false, autoDelete: false, arguments: null);
 
-                _channel.BasicQos(prefetchSize: 0, prefetchCount: prefetchCount, global: false);
+                _channel.BasicQos(prefetchSize: 0, prefetchCount: 16, global: false);
                 _logger.LogInformation("Consumer QoS set with prefetch count of {PrefetchCount}", prefetchCount);
 
                 var consumer = new EventingBasicConsumer(_channel);
