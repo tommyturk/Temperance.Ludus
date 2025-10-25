@@ -409,6 +409,7 @@ def generate_training_labels(prices_df, param_grid: Dict, model_lookback_window:
                         X_train.append(feature_array.flatten())
                         y_train.append(best_p_values)
                         successful_samples += 1
+                        last_best_perf = best_perf
                     else:
                         failed_attempts += 1
                 except Exception as e:
@@ -419,13 +420,13 @@ def generate_training_labels(prices_df, param_grid: Dict, model_lookback_window:
                 failed_attempts += 1
 
         eprint(f"Generated {len(X_train)} training samples (successful: {successful_samples}, failed: {failed_attempts})")
-        return np.array(X_train), np.array(y_train)
+        return np.array(X_train), np.array(y_train), last_best_perf
 
     except Exception as e:
         eprint(f"Error in generate_training_labels: {e}")
         import traceback
         eprint(traceback.format_exc())
-        return np.array([]), np.array([])
+        return np.array([]), np.array([]), None
 
 def main(args):
     """Main execution function"""
@@ -442,6 +443,8 @@ def main(args):
         eprint(f"Loading data from: {args.input_csv_path}")
         prices_df = pd.read_csv(args.input_csv_path, parse_dates=['Timestamp'])
         prices_df = prices_df.set_index('Timestamp')
+
+        optimization_performance = None
         
         eprint(f"Loaded {len(prices_df)} price records")
         
@@ -473,7 +476,7 @@ def main(args):
         # Training or fine-tuning
         if args.mode == 'train':
             eprint("Starting training mode")
-            X_train, y_train = generate_training_labels(prices_df, param_grid, args.lookback, 
+            X_train, y_train, optimization_performance = generate_training_labels(prices_df, param_grid, args.lookback, 
                                                        use_cudf, use_cupy, cp_module)
             
             if len(X_train) == 0:
@@ -571,7 +574,7 @@ def main(args):
             model = tf.keras.models.load_model(args.model_path)
             eprint("Loaded existing model for fine-tuning")
             
-            X_tune, y_tune = generate_training_labels(prices_df, param_grid, args.lookback,
+            X_tune, y_tune, optimization_performance = generate_training_labels(prices_df, param_grid, args.lookback,
                                                      use_cudf, use_cupy, cp_module)
             
             if len(X_tune) > 0:
@@ -637,7 +640,7 @@ def main(args):
         result = {
             "Status": "success",
             "BestParameters": final_params,
-            "Performance": None,
+            "Performance": optimization_performance,
             "Message": f"Successfully optimized parameters using {args.mode} mode"
         }
         

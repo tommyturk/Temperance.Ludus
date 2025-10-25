@@ -4,7 +4,7 @@
     {
         public string Status { get; set; }
         public BestParameters? BestParameters { get; set; }
-        public double? Performance { get; set; }
+        public double? TotalReturns { get; set; }
         public string? Message { get; set; }
     }
 }

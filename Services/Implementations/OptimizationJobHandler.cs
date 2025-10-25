@@ -127,6 +127,7 @@ namespace Temperance.Ludus.Services.Implementations
                         Symbol = job.Symbol,
                         Interval = job.Interval,
                         OptimizedParameters = result.BestParameters,
+                        TotalReturns = result.TotalReturns,
                         StartDate = job.StartDate,
                         EndDate = job.EndDate
                     };

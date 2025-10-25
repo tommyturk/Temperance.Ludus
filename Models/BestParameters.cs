@@ -7,9 +7,8 @@
         public int RSIPeriod { get; set; }
         public int RSIOverbought { get; set; }
         public int RSIOversold { get; set; }
-
         public int AtrPeriod { get; set; }
-
         public double AtrMultiplier { get; set; }
+        public double TotalReturns { get; set; }
     }
 }
