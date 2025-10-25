@@ -29,7 +29,7 @@ namespace Temperance.Ludus.Repository.Implementations
 
             const string sql = @"
                 INSERT INTO Ludus.StrategyOptimizedParameters 
-                    (StrategyName, Symbol, Interval, OptimizedParametersJson, StartDate, EndDate, CreatedAt)
+                    (StrategyName, Symbol, Interval, OptimizedParametersJson, TotalReturns, StartDate, EndDate, CreatedAt)
                 VALUES 
                     (@StrategyName, @Symbol, @Interval, @OptimizedParametersJson, @TotalReturns, @StartDate, @EndDate, @CreatedAt);
                 SELECT CAST(SCOPE_IDENTITY() as int)";

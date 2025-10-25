@@ -312,13 +312,14 @@ def generate_training_labels(prices_df, param_grid: Dict, model_lookback_window:
 
         if num_steps <= 0:
             eprint(f"Insufficient data: need at least {LABEL_GENERATION_PERIOD + model_lookback_window} rows, got {len(prices_df)}")
-            return np.array([]), np.array([])
+            return np.array([]), np.array([]), None
 
         param_combinations = list(itertools.product(*param_grid.values()))
         eprint(f"Starting label generation for {num_steps} steps with {len(param_combinations)} parameter combinations")
 
         successful_samples = 0
         failed_attempts = 0
+        last_best_perf = None
 
         for i in range(0, num_steps, max(1, num_steps // 100)):  # Sample every N steps to reduce computation
             if i % 10 == 0:
@@ -523,6 +524,8 @@ def main(args):
                     
                     X_train = np.array(X_synthetic)
                     y_train = np.array(y_synthetic)
+
+                    optimization_performance = 0.0 
                     
                     eprint(f"Created {len(X_train)} synthetic training samples")
                 else:
@@ -584,7 +587,8 @@ def main(args):
                 eprint("Fine-tuning completed")
             else:
                 eprint("No fine-tuning data generated, skipping fine-tuning")
-        
+                optimization_performance = 0.0
+
         # Make predictions
         eprint("Loading model for prediction")
         model = tf.keras.models.load_model(args.model_path)
@@ -640,7 +644,7 @@ def main(args):
         result = {
             "Status": "success",
             "BestParameters": final_params,
-            "Performance": optimization_performance,
+            "TotalReturns": float(optimization_performance) if optimization_performance is not None else 0.0,
             "Message": f"Successfully optimized parameters using {args.mode} mode"
         }
         
@@ -660,7 +664,7 @@ def main(args):
             "Status": "error",
             "Message": str(e),
             "BestParameters": None,
-            "Performance": None
+            "TotalReturns": None
         }
         
         try:

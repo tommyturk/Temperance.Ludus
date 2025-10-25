@@ -48,17 +48,22 @@ namespace Temperance.Ludus.Services.Implementations
             _logger.LogInformation("Processing optimization job {JobId} for {Symbol} [{Interval}]...",
                 job.JobId, job.Symbol, job.Interval);
 
-            if (!_optimizerSettings.StrategyScripts.TryGetValue(job.StrategyName, out var scriptName))
-            {
-                _logger.LogError("No optimizer script configured for strategy '{StrategyName}'. Cannot process job {JobId}.",
-                    job.StrategyName, job.JobId);
+            _logger.LogInformation("Using strategy: {StrategyName}", job.StrategyName);
+            var loadedKeys = string.Join(", ", _optimizerSettings.StrategyScripts.Keys);
+            _logger.LogInformation("Available script keys in configuration: [{LoadedKeys}]", loadedKeys);
 
-                await _conductorClient.NotifyOptimizationFailedAsync(job.JobId, job.SessionId.Value,
-                    $"No optimizer script configured for strategy: {job.StrategyName}");
+            //if (!_optimizerSettings.StrategyScripts.TryGetValue(job.StrategyName, out var scriptName))
+            //{
+            //    _logger.LogError("No optimizer script configured for strategy '{StrategyName}'. Cannot process job {JobId}.",
+            //        job.StrategyName, job.JobId);
 
-                return new PythonScriptResult { Status = "Failed", Message = $"No script mapping for {job.StrategyName}." };
-            }
-
+            //    await _conductorClient.NotifyOptimizationFailedAsync(job.JobId, job.SessionId.Value,
+            //        $"No optimizer script configured for strategy: {job.StrategyName}");
+            //}
+            //if(String.IsNullOrWhiteSpace(scriptName))
+            var scriptName = "optimizer.py";
+            _logger.LogInformation("Using optimization script: {ScriptName} for strategy: {StrategyName}",
+                scriptName, job.StrategyName);
             const int minimumDataPoints = 150; 
 
             var baseTempPath = _baseTempPath;
