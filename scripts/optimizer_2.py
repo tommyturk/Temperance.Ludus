@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
 import itertools
+from joblib import Parallel, delayed
+import multiprocessing
 
 warnings.filterwarnings('ignore')
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -286,120 +288,232 @@ def get_empty_metrics():
 # GRID SEARCH OPTIMIZATION
 # ============================================================================
 
-def optimize_parameters(df, param_grid):
-    """
-    Run grid search to find optimal parameters
+# def optimize_parameters(df, param_grid):
+#     """
+#     Run grid search to find optimal parameters
     
-    Returns: (optimal_params_dict, metrics_dict)
+#     Returns: (optimal_params_dict, metrics_dict)
+#     """
+#     close_prices = df['ClosePrice'].values
+    
+#     param_combinations = list(itertools.product(*param_grid.values()))
+#     param_keys = list(param_grid.keys())
+    
+#     best_sharpe = -float('inf')
+#     best_params = None
+#     best_metrics = None
+    
+#     eprint(f"  Testing {len(param_combinations)} parameter combinations...")
+    
+#     for params in param_combinations:
+#         p = dict(zip(param_keys, params))
+        
+#         try:
+#             # Calculate indicators
+#             mean = pd.Series(close_prices).rolling(window=p['ma_period'], min_periods=p['ma_period']).mean()
+#             std = pd.Series(close_prices).rolling(window=p['ma_period'], min_periods=p['ma_period']).std()
+#             rsi = calculate_rsi(pd.Series(close_prices), p['rsi_period'])
+#             atr = calculate_atr(df, p['atr_period'])
+            
+#             valid_start = max(p['ma_period'], p['rsi_period'], p['atr_period'])
+            
+#             lower_band = mean - std * p['std_dev_multiplier'] - atr * p['atr_multiplier']
+            
+#             # Entry/exit conditions
+#             price_below_lower = close_prices < lower_band
+#             rsi_oversold = rsi < p['rsi_oversold']
+#             price_above_mean = close_prices > mean
+            
+#             entry_condition = price_below_lower & rsi_oversold
+#             exit_condition = price_above_mean
+            
+#             entry_indices = np.where(entry_condition.fillna(False))[0]
+#             exit_indices = np.where(exit_condition.fillna(False))[0]
+            
+#             entry_indices = entry_indices[entry_indices >= valid_start]
+#             exit_indices = exit_indices[exit_indices >= valid_start]
+            
+#             if len(entry_indices) >= 2 and len(exit_indices) >= 2:
+#                 metrics = vectorized_backtest(close_prices, entry_indices, exit_indices)
+                
+#                 if metrics['sharpe_ratio'] > best_sharpe:
+#                     best_sharpe = metrics['sharpe_ratio']
+#                     best_params = p
+#                     best_metrics = metrics
+        
+#         except Exception:
+#             continue
+    
+#     if best_params is None:
+#         eprint("  [WARNING] No valid parameter combination found, using defaults")
+#         best_params = {k: np.median(v) for k, v in param_grid.items()}
+#         best_metrics = get_empty_metrics()
+    
+#     return best_params, best_metrics
+def optimize_parameters(df, param_grid, sample_fraction=0.05):
+    """
+    Parallelized parameter optimization across CPU cores.
+    Uses a random subset of all combinations for speed (sample_fraction).
     """
     close_prices = df['ClosePrice'].values
-    
     param_combinations = list(itertools.product(*param_grid.values()))
     param_keys = list(param_grid.keys())
-    
-    best_sharpe = -float('inf')
-    best_params = None
-    best_metrics = None
-    
-    eprint(f"  Testing {len(param_combinations)} parameter combinations...")
-    
-    for params in param_combinations:
+
+    # Randomly sample a fraction of all combos for huge speedup
+    if sample_fraction < 1.0:
+        import random
+        random.shuffle(param_combinations)
+        n_sample = max(1000, int(len(param_combinations) * sample_fraction))
+        param_combinations = param_combinations[:n_sample]
+
+    n_jobs = max(1, multiprocessing.cpu_count() - 2)
+    eprint(f"[INFO] Evaluating ~{len(param_combinations):,} parameter sets using {n_jobs} cores...")
+
+    results = Parallel(n_jobs=n_jobs, backend="loky", verbose=0)(
+        delayed(_evaluate_params)(df, close_prices, param_keys, params)
+        for params in param_combinations
+    )
+
+    valid_results = [r for r in results if r is not None]
+    if not valid_results:
+        eprint("[WARNING] No valid parameter results found.")
+        return {k: np.median(v) for k, v in param_grid.items()}, get_empty_metrics()
+
+    # Find best Sharpe
+    best_p, best_sharpe, best_metrics = max(valid_results, key=lambda x: x[1])
+    return best_p, best_metrics
+
+def _evaluate_params(df, close_prices, param_keys, params):
+    """Worker: evaluate one parameter combination"""
+    try:
         p = dict(zip(param_keys, params))
-        
-        try:
-            # Calculate indicators
-            mean = pd.Series(close_prices).rolling(window=p['ma_period'], min_periods=p['ma_period']).mean()
-            std = pd.Series(close_prices).rolling(window=p['ma_period'], min_periods=p['ma_period']).std()
-            rsi = calculate_rsi(pd.Series(close_prices), p['rsi_period'])
-            atr = calculate_atr(df, p['atr_period'])
-            
-            valid_start = max(p['ma_period'], p['rsi_period'], p['atr_period'])
-            
-            lower_band = mean - std * p['std_dev_multiplier'] - atr * p['atr_multiplier']
-            
-            # Entry/exit conditions
-            price_below_lower = close_prices < lower_band
-            rsi_oversold = rsi < p['rsi_oversold']
-            price_above_mean = close_prices > mean
-            
-            entry_condition = price_below_lower & rsi_oversold
-            exit_condition = price_above_mean
-            
-            entry_indices = np.where(entry_condition.fillna(False))[0]
-            exit_indices = np.where(exit_condition.fillna(False))[0]
-            
-            entry_indices = entry_indices[entry_indices >= valid_start]
-            exit_indices = exit_indices[exit_indices >= valid_start]
-            
-            if len(entry_indices) >= 2 and len(exit_indices) >= 2:
-                metrics = vectorized_backtest(close_prices, entry_indices, exit_indices)
-                
-                if metrics['sharpe_ratio'] > best_sharpe:
-                    best_sharpe = metrics['sharpe_ratio']
-                    best_params = p
-                    best_metrics = metrics
-        
-        except Exception:
-            continue
-    
-    if best_params is None:
-        eprint("  [WARNING] No valid parameter combination found, using defaults")
-        best_params = {k: np.median(v) for k, v in param_grid.items()}
-        best_metrics = get_empty_metrics()
-    
-    return best_params, best_metrics
+
+        mean = pd.Series(close_prices).rolling(window=p['ma_period'], min_periods=p['ma_period']).mean()
+        std = pd.Series(close_prices).rolling(window=p['ma_period'], min_periods=p['ma_period']).std()
+        rsi = calculate_rsi(pd.Series(close_prices), p['rsi_period'])
+        atr = calculate_atr(df, p['atr_period'])
+        valid_start = max(p['ma_period'], p['rsi_period'], p['atr_period'])
+
+        lower_band = mean - std * p['std_dev_multiplier'] - atr * p['atr_multiplier']
+        price_below_lower = close_prices < lower_band
+        rsi_oversold = rsi < p['rsi_oversold']
+        price_above_mean = close_prices > mean
+
+        entry_condition = price_below_lower & rsi_oversold
+        exit_condition = price_above_mean
+
+        entry_indices = np.where(entry_condition.fillna(False))[0]
+        exit_indices = np.where(exit_condition.fillna(False))[0]
+        entry_indices = entry_indices[entry_indices >= valid_start]
+        exit_indices = exit_indices[exit_indices >= valid_start]
+
+        if len(entry_indices) < 2 or len(exit_indices) < 2:
+            return None
+
+        metrics = vectorized_backtest(close_prices, entry_indices, exit_indices)
+        return p, metrics['sharpe_ratio'], metrics
+    except Exception:
+        return None
 
 # ============================================================================
 # TRAINING DATA GENERATION
 # ============================================================================
 
+# def generate_training_samples(df, window_size=60, stride=5, param_grid=PARAM_GRID):
+#     """
+#     Generate training samples with rolling windows
+    
+#     Args:
+#         df: Price DataFrame
+#         window_size: Size of each window (60 days)
+#         stride: Days between windows (5 = ~146 samples per 2 years)
+#         param_grid: Parameter grid for optimization
+    
+#     Returns: (X, y, metrics_list)
+#     """
+#     X_samples = []
+#     y_samples = []
+#     metrics_list = []
+    
+#     num_windows = (len(df) - window_size - 30) // stride
+#     eprint(f"Generating {num_windows} training samples (stride={stride})...")
+    
+#     for i in range(0, len(df) - window_size - 30, stride):
+#         if i % (stride * 10) == 0:
+#             progress = (i / stride) / num_windows * 100
+#             eprint(f"  Progress: {progress:.1f}% ({i // stride}/{num_windows})")
+        
+#         # Extract window
+#         window_df = df.iloc[i:i+window_size].copy()
+#         validation_df = df.iloc[i+window_size:i+window_size+30].copy()
+        
+#         if len(window_df) < window_size:
+#             continue
+        
+#         # Extract features
+#         features = extract_features(window_df)
+#         if len(features) < window_size or features.isnull().any().any():
+#             continue
+        
+#         feature_window = features.iloc[-window_size:].values
+        
+#         # Optimize parameters on this window
+#         optimal_params, train_metrics = optimize_parameters(window_df, param_grid)
+        
+#         # Validate on next 30 days
+#         val_metrics = get_empty_metrics()
+#         if len(validation_df) >= 30:
+#             _, val_metrics = optimize_parameters(validation_df, {k: [v] for k, v in optimal_params.items()})
+        
+#         # Store sample
+#         param_values = [
+#             optimal_params['ma_period'],
+#             optimal_params['std_dev_multiplier'],
+#             optimal_params['rsi_period'],
+#             optimal_params['rsi_oversold'],
+#             optimal_params['rsi_overbought'],
+#             optimal_params['atr_period'],
+#             optimal_params['atr_multiplier']
+#         ]
+        
+#         X_samples.append(feature_window)
+#         y_samples.append(param_values)
+#         metrics_list.append({**train_metrics, 'validation_sharpe': val_metrics['sharpe_ratio']})
+    
+#     eprint(f"[OK] Generated {len(X_samples)} valid training samples")
+    
+#     return np.array(X_samples), np.array(y_samples), metrics_list
 def generate_training_samples(df, window_size=60, stride=5, param_grid=PARAM_GRID):
     """
-    Generate training samples with rolling windows
-    
-    Args:
-        df: Price DataFrame
-        window_size: Size of each window (60 days)
-        stride: Days between windows (5 = ~146 samples per 2 years)
-        param_grid: Parameter grid for optimization
-    
-    Returns: (X, y, metrics_list)
+    Generate training samples with rolling windows in parallel.
+    Each optimization is CPU-parallelized internally.
     """
-    X_samples = []
-    y_samples = []
-    metrics_list = []
-    
+    X_samples, y_samples, metrics_list = [], [], []
     num_windows = (len(df) - window_size - 30) // stride
     eprint(f"Generating {num_windows} training samples (stride={stride})...")
-    
+
     for i in range(0, len(df) - window_size - 30, stride):
         if i % (stride * 10) == 0:
             progress = (i / stride) / num_windows * 100
             eprint(f"  Progress: {progress:.1f}% ({i // stride}/{num_windows})")
-        
-        # Extract window
+
         window_df = df.iloc[i:i+window_size].copy()
         validation_df = df.iloc[i+window_size:i+window_size+30].copy()
-        
         if len(window_df) < window_size:
             continue
-        
-        # Extract features
+
         features = extract_features(window_df)
-        if len(features) < window_size or features.isnull().any().any():
+        if len(features) < window_size:
             continue
-        
-        feature_window = features.iloc[-window_size:].values
-        
-        # Optimize parameters on this window
+
+        # Parallel optimization call
         optimal_params, train_metrics = optimize_parameters(window_df, param_grid)
-        
-        # Validate on next 30 days
+
+        # Validate
         val_metrics = get_empty_metrics()
         if len(validation_df) >= 30:
             _, val_metrics = optimize_parameters(validation_df, {k: [v] for k, v in optimal_params.items()})
-        
-        # Store sample
+
         param_values = [
             optimal_params['ma_period'],
             optimal_params['std_dev_multiplier'],
@@ -409,13 +523,12 @@ def generate_training_samples(df, window_size=60, stride=5, param_grid=PARAM_GRI
             optimal_params['atr_period'],
             optimal_params['atr_multiplier']
         ]
-        
-        X_samples.append(feature_window)
+
+        X_samples.append(features.iloc[-window_size:].values)
         y_samples.append(param_values)
         metrics_list.append({**train_metrics, 'validation_sharpe': val_metrics['sharpe_ratio']})
-    
+
     eprint(f"[OK] Generated {len(X_samples)} valid training samples")
-    
     return np.array(X_samples), np.array(y_samples), metrics_list
 
 # ============================================================================
