@@ -1,6 +1,5 @@
 ﻿using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
-using System.Runtime.InteropServices;
 using System.Text;
 using Temperance.Ludus.Services.Interfaces;
 

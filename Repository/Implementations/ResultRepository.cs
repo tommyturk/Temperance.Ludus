@@ -29,9 +29,9 @@ namespace Temperance.Ludus.Repository.Implementations
 
             const string sql = @"
                 INSERT INTO Ludus.StrategyOptimizedParameters 
-                    (StrategyName, Symbol, Interval, OptimizedParametersJson, TotalReturns, StartDate, EndDate, CreatedAt)
+                    (StrategyName, Symbol, Interval, OptimizedParametersJson, Metrics, StartDate, EndDate, CreatedAt)
                 VALUES 
-                    (@StrategyName, @Symbol, @Interval, @OptimizedParametersJson, @TotalReturns, @StartDate, @EndDate, @CreatedAt);
+                    (@StrategyName, @Symbol, @Interval, @OptimizedParametersJson, @Metrics, @StartDate, @EndDate, @CreatedAt);
                 SELECT CAST(SCOPE_IDENTITY() as int)";
 
             await using var connection = new SqlConnection(connectionString);
@@ -42,7 +42,7 @@ namespace Temperance.Ludus.Repository.Implementations
                 result.Symbol,
                 result.Interval,
                 OptimizedParametersJson = JsonSerializer.Serialize(result.OptimizedParameters),
-                result.TotalReturns,
+                Metrics = JsonSerializer.Serialize(result.Metrics),
                 result.StartDate,
                 result.EndDate,
                 CreatedAt = DateTime.UtcNow 

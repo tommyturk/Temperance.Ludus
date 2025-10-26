@@ -319,6 +319,12 @@ def generate_training_labels(prices_df, param_grid: Dict, model_lookback_window:
 
         successful_samples = 0
         failed_attempts = 0
+
+        best_overall_returns = -float('inf')
+        best_overall_sharpe = -float('inf')
+        best_overall_winrate = 0.0
+        best_overall_trades = 0
+
         last_best_perf = None
 
         for i in range(0, num_steps, max(1, num_steps // 100)):  # Sample every N steps to reduce computation
@@ -387,11 +393,19 @@ def generate_training_labels(prices_df, param_grid: Dict, model_lookback_window:
                     if len(entry_indices) >= 2 and len(exit_indices) >= 2:
                         try:
                             perf = vectorized_backtest(window_prices, entry_indices, exit_indices, use_cupy)
+                            
+                            metrics = calculate_backtest_metrics(window_prices, entry_indices, exit_indices, use_cupy)
                             valid_backtests += 1
 
                             if not np.isnan(perf) and not np.isinf(perf) and perf > best_perf:
                                 best_perf = perf
                                 best_p_values = list(p.values())
+
+                                if metrics['total_return'] > best_overall_returns:
+                                    best_overall_returns = metrics['total_return']
+                                    best_overall_sharpe = metrics['sharpe_ratio']
+                                    best_overall_winrate = metrics['win_rate']
+                                    best_overall_trades = metrics['num_trades']
                         except Exception as bt_error:
                             continue
 
@@ -421,6 +435,14 @@ def generate_training_labels(prices_df, param_grid: Dict, model_lookback_window:
                 failed_attempts += 1
 
         eprint(f"Generated {len(X_train)} training samples (successful: {successful_samples}, failed: {failed_attempts})")
+
+        optimization_metrics = {
+            'total_return': best_overall_return if best_overall_return != -float('inf') else 0.0,
+            'sharpe_ratio': best_overall_sharpe if best_overall_sharpe != -float('inf') else 0.0,
+            'win_rate': best_overall_winrate,
+            'num_trades': best_overall_trades
+        }
+
         return np.array(X_train), np.array(y_train), last_best_perf
 
     except Exception as e:
@@ -428,6 +450,129 @@ def generate_training_labels(prices_df, param_grid: Dict, model_lookback_window:
         import traceback
         eprint(traceback.format_exc())
         return np.array([]), np.array([]), None
+
+def calculate_backtest_metrics(prices, entries, exits, use_cupy: bool) -> Dict[str, float]:
+    """Calculate comprehensive backtest metrics"""
+    try:
+        if use_cupy:
+            import cupy as cp
+            prices_arr = cp.asnumpy(cp.asarray(prices))
+        else:
+            prices_arr = np.asarray(prices)
+        
+        if len(prices_arr) < 2:
+            return {
+                'total_return': 0.0,
+                'sharpe_ratio': 0.0,
+                'win_rate': 0.0,
+                'num_trades': 0,
+                'max_drawdown': 0.0,
+                'profit_factor': 0.0
+            }
+        
+        # Create signals
+        signals = np.zeros(len(prices_arr), dtype=np.int8)
+        
+        valid_entries = entries[entries < len(prices_arr)]
+        valid_exits = exits[exits < len(prices_arr)]
+        
+        if len(valid_entries) > 0:
+            signals[valid_entries] = 1
+        if len(valid_exits) > 0:
+            signals[valid_exits] = -1
+        
+        # Calculate positions
+        positions = np.zeros(len(prices_arr), dtype=np.float32)
+        current_pos = 0.0
+        
+        for i in range(len(signals)):
+            if signals[i] == 1:
+                current_pos = 1.0
+            elif signals[i] == -1:
+                current_pos = 0.0
+            positions[i] = current_pos
+        
+        positions_shifted = np.roll(positions, 1)
+        positions_shifted[0] = 0.0
+        
+        # Calculate returns
+        price_ratios = prices_arr[1:] / prices_arr[:-1]
+        price_ratios = np.where(price_ratios <= 0, 1.0, price_ratios)
+        log_returns = np.log(price_ratios)
+        log_returns = np.concatenate([np.array([0.0]), log_returns])
+        
+        strategy_returns = positions_shifted * log_returns
+        
+        # Total return
+        total_log_return = np.sum(strategy_returns)
+        total_return = np.exp(total_log_return) - 1.0 if np.isfinite(total_log_return) else 0.0
+        
+        # Sharpe ratio (annualized, assuming hourly data)
+        non_zero_returns = strategy_returns[strategy_returns != 0]
+        if len(non_zero_returns) > 1:
+            ret_std = np.std(non_zero_returns)
+            ret_mean = np.mean(non_zero_returns)
+            if ret_std > 0:
+                # Annualize for hourly data: sqrt(252 * 6.5) = sqrt(1638)
+                sharpe_ratio = (ret_mean / ret_std) * np.sqrt(1638)
+            else:
+                sharpe_ratio = 0.0
+        else:
+            sharpe_ratio = 0.0
+        
+        # Trade-level metrics
+        trades = []
+        in_position = False
+        entry_price = 0.0
+        
+        for i in range(len(signals)):
+            if signals[i] == 1 and not in_position:
+                entry_price = prices_arr[i]
+                in_position = True
+            elif signals[i] == -1 and in_position:
+                exit_price = prices_arr[i]
+                trade_return = (exit_price - entry_price) / entry_price
+                trades.append(trade_return)
+                in_position = False
+        
+        # Win rate
+        if len(trades) > 0:
+            winning_trades = sum(1 for t in trades if t > 0)
+            win_rate = winning_trades / len(trades)
+            
+            # Profit factor
+            gross_profit = sum(t for t in trades if t > 0)
+            gross_loss = abs(sum(t for t in trades if t < 0))
+            profit_factor = gross_profit / gross_loss if gross_loss > 0 else 0.0
+        else:
+            win_rate = 0.0
+            profit_factor = 0.0
+        
+        # Max drawdown
+        cumulative = np.exp(np.cumsum(strategy_returns))
+        running_max = np.maximum.accumulate(cumulative)
+        drawdown = (cumulative - running_max) / running_max
+        max_drawdown = np.min(drawdown)
+        
+        return {
+            'total_return': float(total_return),
+            'sharpe_ratio': float(sharpe_ratio),
+            'win_rate': float(win_rate),
+            'num_trades': len(trades),
+            'max_drawdown': float(max_drawdown),
+            'profit_factor': float(profit_factor)
+        }
+        
+    except Exception as e:
+        eprint(f"Error calculating metrics: {e}")
+        return {
+            'total_return': 0.0,
+            'sharpe_ratio': 0.0,
+            'win_rate': 0.0,
+            'num_trades': 0,
+            'max_drawdown': 0.0,
+            'profit_factor': 0.0
+        }
 
 def main(args):
     """Main execution function"""
@@ -644,7 +789,14 @@ def main(args):
         result = {
             "Status": "success",
             "BestParameters": final_params,
-            "TotalReturns": float(optimization_performance) if optimization_performance is not None else 0.0,
+            "Metrics": {
+                "TotalReturns": optimization_metrics['total_return'] if optimization_metrics else 0.0,
+                "SharpeRatio": optimization_metrics['sharpe_ratio'] if optimization_metrics else 0.0,
+                "WinRate": optimization_metrics['win_rate'] if optimization_metrics else 0.0,
+                "NumTrades": optimization_metrics['num_trades'] if optimization_metrics else 0,
+                "MaxDrawdown": optimization_metrics.get('max_drawdown', 0.0) if optimization_metrics else 0.0,
+                "ProfitFactor": optimization_metrics.get('profit_factor', 0.0) if optimization_metrics else 0.0
+            },
             "Message": f"Successfully optimized parameters using {args.mode} mode"
         }
         

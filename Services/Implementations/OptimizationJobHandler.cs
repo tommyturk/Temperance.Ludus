@@ -61,7 +61,7 @@ namespace Temperance.Ludus.Services.Implementations
             //        $"No optimizer script configured for strategy: {job.StrategyName}");
             //}
             //if(String.IsNullOrWhiteSpace(scriptName))
-            var scriptName = "optimizer.py";
+            var scriptName = "optimizer_2.py";
             _logger.LogInformation("Using optimization script: {ScriptName} for strategy: {StrategyName}",
                 scriptName, job.StrategyName);
             const int minimumDataPoints = 150; 
@@ -132,7 +132,6 @@ namespace Temperance.Ludus.Services.Implementations
                         Symbol = job.Symbol,
                         Interval = job.Interval,
                         OptimizedParameters = result.BestParameters,
-                        TotalReturns = result.TotalReturns,
                         StartDate = job.StartDate,
                         EndDate = job.EndDate
                     };
