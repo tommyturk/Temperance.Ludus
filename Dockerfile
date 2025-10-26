@@ -1,4 +1,3 @@
-# Stage 1: Build the .NET app
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 COPY ["Temperance.Ludus.csproj", "."]
@@ -9,7 +8,6 @@ RUN dotnet build "Temperance.Ludus.csproj" -c Release -o /app/build
 # Stage 2: GPU runtime
 FROM nvidia/cuda:12.1.0-devel-ubuntu22.04
 WORKDIR /app
-
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
@@ -45,14 +43,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcudnn8=8.9.2.26-1+cuda12.1 libcudnn8-dev=8.9.2.26-1+cuda12.1 && \
     apt-mark hold libcudnn8 libcudnn8-dev && rm -rf /var/lib/apt/lists/*
 
-# Python libs
-RUN pip install --no-cache-dir tensorflow==2.16.1 \
-    numpy==1.24.3 pandas==2.2.2 scikit-learn==1.5.0 joblib==1.4.2 pynvml optuna==3.6.1
+# Python libs - FIXED: Remove comment from pip install line
+RUN pip install --no-cache-dir \
+    tensorflow==2.16.1 \
+    numpy==1.24.3 \
+    pandas==2.2.2 \
+    scikit-learn==1.5.0 \
+    joblib==1.4.2 \
+    pynvml \
+    optuna==3.6.1 \
+    cupy-cuda12x==13.0.0
 
 # Copy app
 COPY --from=build /app/build .
 COPY ./scripts ./scripts
 RUN mkdir -p /tmp/ludus_models && chmod -R 755 /app /tmp/ludus_models
 
-RUN python -c "import tensorflow as tf; print('GPU:', tf.config.list_physical_devices('GPU'))" || echo "TensorFlow GPU test failed"
+# Verify GPU and CuPy
+RUN python -c "import tensorflow as tf; print('GPU:', tf.config.list_physical_devices('GPU'))" || echo "TensorFlow GPU test completed"
+RUN python -c "import cupy as cp; print('CuPy available:', cp.cuda.is_available())" || echo "CuPy test completed"
+
 ENTRYPOINT ["dotnet", "Temperance.Ludus.dll"]

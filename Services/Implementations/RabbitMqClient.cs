@@ -13,6 +13,7 @@ namespace Temperance.Ludus.Services.Implementations
         private readonly string _hostName;
         private readonly string _userName;
         private readonly string _password;
+        private Timer _heartbeatTimer;
 
         public RabbitMqClient(IConfiguration configuration, ILogger<RabbitMqClient> logger)
         {
@@ -29,7 +30,9 @@ namespace Temperance.Ludus.Services.Implementations
                 UserName = _userName,
                 Password = _password,
                 AutomaticRecoveryEnabled = true,
-                NetworkRecoveryInterval = TimeSpan.FromSeconds(10)
+                NetworkRecoveryInterval = TimeSpan.FromSeconds(10),
+                RequestedHeartbeat = TimeSpan.FromSeconds(60),
+                ContinuationTimeout = TimeSpan.FromSeconds(30)
             };
 
             try
@@ -73,20 +76,51 @@ namespace Temperance.Ludus.Services.Implementations
                 {
                     var body = ea.Body.ToArray();
                     var message = Encoding.UTF8.GetString(body);
-                    _logger.LogInformation("Received message from queue '{QueueName}': {MessageLength} characters", queueName, message.Length);
+                    _logger.LogInformation("Received message from queue '{QueueName}': {MessageLength} characters",
+                        queueName, message.Length);
+
+                    // Start heartbeat timer to prevent timeout
+                    var cts = new CancellationTokenSource();
+                    _heartbeatTimer = new Timer(_ =>
+                    {
+                        try
+                        {
+                            // Send heartbeat to keep connection alive
+                            _channel.BasicQos(0, prefetchCount, false);
+                            _logger.LogDebug("Heartbeat sent");
+                        }
+                        catch { }
+                    }, null, TimeSpan.Zero, TimeSpan.FromSeconds(30));
 
                     try
                     {
-                        await onMessageReceived(message);
+                        // Set a reasonable timeout (e.g., 30 minutes for training)
+                        var timeoutTask = Task.Delay(TimeSpan.FromMinutes(30), cts.Token);
+                        var processingTask = onMessageReceived(message);
 
-                        _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
-                        _logger.LogDebug("Message acknowledged successfully");
+                        var completedTask = await Task.WhenAny(processingTask, timeoutTask);
+
+                        if (completedTask == timeoutTask)
+                        {
+                            _logger.LogError("Message processing timeout after 30 minutes");
+                            _channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: true);
+                        }
+                        else
+                        {
+                            await processingTask; // Ensure any exceptions are observed
+                            _channel.BasicAck(deliveryTag: ea.DeliveryTag, multiple: false);
+                            _logger.LogDebug("Message acknowledged successfully");
+                        }
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Error processing message from queue '{QueueName}'. Discarding message (requeue=false).", queueName);
-
+                        _logger.LogError(ex, "Error processing message from queue '{QueueName}'", queueName);
                         _channel.BasicNack(deliveryTag: ea.DeliveryTag, multiple: false, requeue: false);
+                    }
+                    finally
+                    {
+                        _heartbeatTimer?.Dispose();
+                        cts.Dispose();
                     }
                 };
 
