@@ -653,6 +653,8 @@ def create_model(input_shape, output_shape):
         # Input layer
         layers.Input(shape=input_shape),
         
+        # 2. Flatten layer 
+        layers.Flatten(),
         # Batch normalization for input
         layers.BatchNormalization(),
         
@@ -872,19 +874,42 @@ def main(args):
             
             # Make prediction for latest data
             features = extract_features(df)
-            features_60d = features.iloc[-args.lookback:].values
-            predicted_params = predict_parameters(model, features_60d, PARAM_GRID)
-            
+            features_latest = features.iloc[-args.lookback:].values
+            predicted_params_normalized = predict_parameters(model, features_latest, PARAM_GRID)
+           
+            # --- NEW: Run backtest with predicted parameters on validation data ---
+            eprint(f"[METRICS] Running final backtest on validation data with predicted params: {predicted_params_normalized}")
+            val_prices = val_df['ClosePrice'].values
+            val_high = val_df['HighPrice'].values
+            val_low = val_df['LowPrice'].values
+
+            # Recalculate indicators for validation period using predicted params
+            ma_val = pd.Series(val_prices).rolling(window=predicted_params_normalized['MovingAveragePeriod'], min_periods=1).mean().values
+            std_val = pd.Series(val_prices).rolling(window=predicted_params_normalized['MovingAveragePeriod'], min_periods=1).std().fillna(0).values
+            upper_band_val = ma_val + (std_val * predicted_params_normalized['StdDevMultiplier'])
+            lower_band_val = ma_val - (std_val * predicted_params_normalized['StdDevMultiplier'])
+            rsi_val = calculate_rsi_gpu(val_prices, predicted_params_normalized['RSIPeriod'])
+            # atr_val = calculate_atr_gpu(val_high, val_low, val_prices, predicted_params_normalized['AtrPeriod']) # ATR not used in signals here, omit if not needed
+
+            # Generate signals on validation data
+            entries_val = np.where((val_prices < lower_band_val) & (rsi_val < predicted_params_normalized['RSIOversold']))[0]
+            exits_val = np.where((val_prices > upper_band_val) | (rsi_val > predicted_params_normalized['RSIOverbought']))[0]
+
+            # Calculate final metrics using GPU backtest
+            final_metrics = vectorized_backtest_gpu(val_prices, entries_val, exits_val)
+            eprint(f"[METRICS] Final backtest metrics on validation data: {final_metrics}")
+            # --- END NEW ---
+
             result = {
                 "Status": "success",
-                "BestParameters": predicted_params,
+                "BestParameters": predicted_params_normalized,
                 "Metrics": {
-                    "TotalReturns": None,
-                    "SharpeRatio": float(avg_sharpe),
-                    "WinRate": None,
-                    "NumTrades": None,
-                    "MaxDrawdown": None,
-                    "ProfitFactor": None
+                    "TotalReturns": final_metrics['total_return'],  # Use actual metrics
+                    "SharpeRatio": final_metrics['sharpe_ratio'],   # Use actual metrics
+                    "WinRate": final_metrics['win_rate'],           # Use actual metrics
+                    "NumTrades": final_metrics['num_trades'],       # Use actual metrics
+                    "MaxDrawdown": final_metrics['max_drawdown'],   # Use actual metrics
+                    "ProfitFactor": final_metrics['profit_factor']
                 },
                 "TrainingInfo": {
                     "NumSamples": len(X_train),
@@ -925,21 +950,44 @@ def main(args):
             
             # Make prediction
             features = extract_features(df)
-            features_60d = features.iloc[-args.lookback:].values
-            predicted_params = predict_parameters(model, features_60d, PARAM_GRID)
+            features_latest = features.iloc[-args.lookback:].values
+            predicted_params_normalized = predict_parameters(model, features_latest, PARAM_GRID) # Get denormalized params            
             
             avg_val_sharpe = np.mean([m['validation_sharpe'] for m in metrics]) if metrics else 0.0
             
+            # --- NEW: Run backtest with predicted parameters on latest data (e.g., last 200 periods) ---
+            eprint(f"[METRICS] Running final backtest on latest data with predicted params: {predicted_params_normalized}")
+            latest_df = df # Or use full df if appropriate
+            latest_prices = latest_df['ClosePrice'].values
+            latest_high = latest_df['HighPrice'].values
+            latest_low = latest_df['LowPrice'].values
+
+            # Recalculate indicators for latest period using predicted params
+            ma_latest = pd.Series(latest_prices).rolling(window=predicted_params_normalized['MovingAveragePeriod'], min_periods=1).mean().values
+            std_latest = pd.Series(latest_prices).rolling(window=predicted_params_normalized['MovingAveragePeriod'], min_periods=1).std().fillna(0).values
+            upper_band_latest = ma_latest + (std_latest * predicted_params_normalized['StdDevMultiplier'])
+            lower_band_latest = ma_latest - (std_latest * predicted_params_normalized['StdDevMultiplier'])
+            rsi_latest = calculate_rsi_gpu(latest_prices, predicted_params_normalized['RSIPeriod'])
+
+            # Generate signals on latest data
+            entries_latest = np.where((latest_prices < lower_band_latest) & (rsi_latest < predicted_params_normalized['RSIOversold']))[0]
+            exits_latest = np.where((latest_prices > upper_band_latest) | (rsi_latest > predicted_params_normalized['RSIOverbought']))[0]
+
+            # Calculate final metrics using GPU backtest
+            final_metrics = vectorized_backtest_gpu(latest_prices, entries_latest, exits_latest)
+            eprint(f"[METRICS] Final backtest metrics on latest data: {final_metrics}")
+             # --- END NEW ---
+
             result = {
                 "Status": "success",
-                "BestParameters": predicted_params,
+                "BestParameters": predicted_params_normalized,
                 "Metrics": {
-                    "TotalReturns": None,
-                    "SharpeRatio": float(avg_val_sharpe),
-                    "WinRate": None,
-                    "NumTrades": None,
-                    "MaxDrawdown": None,
-                    "ProfitFactor": None
+                    "TotalReturns": final_metrics['total_return'],  # Use actual metrics
+                    "SharpeRatio": final_metrics['sharpe_ratio'],   # Use actual metrics
+                    "WinRate": final_metrics['win_rate'],           # Use actual metrics
+                    "NumTrades": final_metrics['num_trades'],       # Use actual metrics
+                    "MaxDrawdown": final_metrics['max_drawdown'],   # Use actual metrics
+                    "ProfitFactor": final_metrics['profit_factor']  # Use actual metrics
                 },
                 "FineTuneInfo": {
                     "NumSamples": len(X_tune),
@@ -975,18 +1023,18 @@ def main(args):
                 }
                 
                 result = {
-                    "Status": "success",
-                    "BestParameters": predicted_params,
-                    "Metrics": {
-                        "TotalReturns": best_metrics['total_return'],
-                        "SharpeRatio": best_metrics['sharpe_ratio'],
-                        "WinRate": best_metrics['win_rate'],
-                        "NumTrades": best_metrics['num_trades'],
-                        "MaxDrawdown": best_metrics['max_drawdown'],
-                        "ProfitFactor": best_metrics['profit_factor']
+                     "Status": "success",
+                     "BestParameters": predicted_params,
+                     "Metrics": {
+                        "TotalReturns": final_metrics['total_return'],  # Use actual metrics
+                        "SharpeRatio": final_metrics['sharpe_ratio'],   # Use actual metrics
+                        "WinRate": final_metrics['win_rate'],           # Use actual metrics
+                        "NumTrades": final_metrics['num_trades'],       # Use actual metrics
+                        "MaxDrawdown": final_metrics['max_drawdown'],   # Use actual metrics
+                        "ProfitFactor": final_metrics['profit_factor']  # Use actual metrics
                     },
-                    "Message": "GPU-accelerated optimization complete"
-                }
+                     "Message": "GPU-accelerated optimization complete as model not found"
+                 }
             else:
                 # Load model and predict
                 from tensorflow.keras.models import load_model
@@ -998,22 +1046,43 @@ def main(args):
                 if len(features) < args.lookback:
                     raise ValueError(f"Insufficient data for prediction")
                 
-                features_60d = features.iloc[-args.lookback:].values
-                
                 # Predict parameters
-                predicted_params = predict_parameters(model, features_60d, PARAM_GRID)
-                eprint(f"[OK] Predicted parameters: {predicted_params}")
+                features_latest = features.iloc[-args.lookback:].values
+                predicted_params_normalized = predict_parameters(model, features_latest, PARAM_GRID)
+                eprint(f"[OK] Predicted parameters: {predicted_params_normalized}")
                 
+                eprint(f"[METRICS] Running final backtest on latest data with predicted params: {predicted_params_normalized}")
+                latest_df = df.iloc[-200:] # Use recent data for metrics context
+                latest_prices = latest_df['ClosePrice'].values
+                latest_high = latest_df['HighPrice'].values
+                latest_low = latest_df['LowPrice'].values
+
+                # Recalculate indicators
+                ma_latest = pd.Series(latest_prices).rolling(window=predicted_params_normalized['MovingAveragePeriod'], min_periods=1).mean().values
+                std_latest = pd.Series(latest_prices).rolling(window=predicted_params_normalized['MovingAveragePeriod'], min_periods=1).std().fillna(0).values
+                upper_band_latest = ma_latest + (std_latest * predicted_params_normalized['StdDevMultiplier'])
+                lower_band_latest = ma_latest - (std_latest * predicted_params_normalized['StdDevMultiplier'])
+                rsi_latest = calculate_rsi_gpu(latest_prices, predicted_params_normalized['RSIPeriod'])
+
+                # Generate signals
+                entries_latest = np.where((latest_prices < lower_band_latest) & (rsi_latest < predicted_params_normalized['RSIOversold']))[0]
+                exits_latest = np.where((latest_prices > upper_band_latest) | (rsi_latest > predicted_params_normalized['RSIOverbought']))[0]
+
+                # Calculate final metrics
+                final_metrics = vectorized_backtest_gpu(latest_prices, entries_latest, exits_latest)
+                eprint(f"[METRICS] Final backtest metrics on latest data: {final_metrics}")
+                # --- END NEW ---
+
                 result = {
                     "Status": "success",
-                    "BestParameters": predicted_params,
+                    "BestParameters": predicted_params_normalized,
                     "Metrics": {
-                        "TotalReturns": None,
-                        "SharpeRatio": None,
-                        "WinRate": None,
-                        "NumTrades": None,
-                        "MaxDrawdown": None,
-                        "ProfitFactor": None
+                        "TotalReturns": final_metrics['total_return'],  # Use actual metrics
+                        "SharpeRatio": final_metrics['sharpe_ratio'],   # Use actual metrics
+                        "WinRate": final_metrics['win_rate'],           # Use actual metrics
+                        "NumTrades": final_metrics['num_trades'],       # Use actual metrics
+                        "MaxDrawdown": final_metrics['max_drawdown'],   # Use actual metrics
+                        "ProfitFactor": final_metrics['profit_factor']  # Use actual metrics
                     },
                     "Message": "Prediction complete (GPU-accelerated)"
                 }

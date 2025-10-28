@@ -132,18 +132,17 @@ namespace Temperance.Ludus.Services.Implementations
                         Symbol = job.Symbol,
                         Interval = job.Interval,
                         OptimizedParameters = result.BestParameters,
-                        StartDate = job.StartDate,
-                        EndDate = job.EndDate
+                        StartDate = job.StartDate,  
+                        EndDate = job.EndDate,
+                        Metrics = result.Metrics,
                     };
 
-                    try
-                    {
-                        await _resultRepository.SaveOptimizationResultAsync(optimizationResult);
-                    }
-                    catch (SqlException ex) when (ex.Number == 2601 || ex.Number == 2627) 
-                    {
-                        _logger.LogWarning("Optimization result for {Symbol} already exists. Discarding redundant result.", job.Symbol);
-                    }
+                    _logger.LogInformation("Optimization for Job {JobId} completed successfully. Best Parameters: {BestParameters}",
+                        job.JobId, JsonSerializer.Serialize(result.BestParameters));
+
+                    _logger.LogInformation($"StartDate and EndDate for the optimization result: {optimizationResult.StartDate} - {optimizationResult.EndDate}");
+
+                    await _resultRepository.SaveOptimizationResultAsync(optimizationResult);
 
                     await _conductorClient.NotifyOptimizationCompleteAsync(job.JobId, job.SessionId.Value);
                 }
